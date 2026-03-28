@@ -1,0 +1,8 @@
+build/
+generated/
+banks/
+ghidra/
+nesrecomp/
+*.nes
+*.NES
+.mcp.json

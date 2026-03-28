@@ -1,0 +1,16 @@
+# Mega Man 3 (NES) — NESRecomp configuration
+
+[game]
+name = "Mega Man 3"
+output_prefix = "mega-man-3"
+
+# MMC3 bank switching — addresses TBD after initial recompilation pass
+# [mapper]
+# bank_switch = []
+
+# Dispatch patterns and extra functions will be added iteratively
+# based on dispatch_misses.log output.
+
+[functions]
+# fixed = []
+# bank0 = []
