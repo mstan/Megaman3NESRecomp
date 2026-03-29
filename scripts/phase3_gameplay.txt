@@ -1,0 +1,89 @@
+# Phase 3: Gameplay test — walk, shoot, enemies, damage
+TURBO ON
+
+# Navigate: title -> stage select -> Snake Man
+WAIT 400
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 5
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+
+# Pick Snake Man (move left from Needle Man)
+HOLD LEFT
+WAIT 5
+RELEASE LEFT
+WAIT 10
+HOLD START
+WAIT 3
+RELEASE START
+
+# Wait for stage to load + Mega Man to drop
+WAIT 400
+
+TURBO OFF
+LOG Phase3: Stage loaded, Mega Man should be on ground
+SCREENSHOT phase3_01_stage_start.png
+SAVE_STATE C:/temp/phase3_stagestart.sav
+
+# Walk right for 3 seconds
+LOG Phase3: Walking right...
+HOLD RIGHT
+WAIT 180
+SCREENSHOT phase3_02_walking.png
+
+# Fire Mega Buster while walking (tap A several times)
+LOG Phase3: Shooting while walking...
+HOLD A
+WAIT 5
+RELEASE A
+WAIT 10
+HOLD A
+WAIT 5
+RELEASE A
+WAIT 10
+HOLD A
+WAIT 5
+RELEASE A
+WAIT 30
+SCREENSHOT phase3_03_shooting.png
+
+# Keep walking right to find enemies
+WAIT 180
+SCREENSHOT phase3_04_further_right.png
+
+# Try jumping (hold A = shoot, B = jump in MM3? Actually A=jump, B=shoot)
+# MM3: A = jump, B = shoot
+LOG Phase3: Testing jump...
+RELEASE RIGHT
+HOLD A
+WAIT 15
+RELEASE A
+WAIT 30
+SCREENSHOT phase3_05_after_jump.png
+
+# Walk right more to encounter enemies
+LOG Phase3: Walking into enemy territory...
+HOLD RIGHT
+WAIT 300
+SCREENSHOT phase3_06_enemies.png
+DUMP_RAM AE 1
+
+# Release controls and wait — let enemies potentially hit us
+RELEASE RIGHT
+RELEASE A
+WAIT 120
+SCREENSHOT phase3_07_taking_damage.png
+DUMP_RAM AE 1
+
+# Dump full player state
+DUMP_RAM 0300 4
+DUMP_RAM 0360 4
+DUMP_RAM 0380 4
+DUMP_RAM 03C0 4
+
+LOG Phase3: Gameplay test complete
+EXIT 0

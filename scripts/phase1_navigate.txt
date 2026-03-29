@@ -1,0 +1,72 @@
+# Phase 1: Boot -> Title -> Stage Select -> Enter a Stage
+TURBO ON
+LOG Phase1: Game booting, waiting for title screen...
+
+# Wait for init + Capcom splash + title screen animation
+WAIT 400
+
+SCREENSHOT phase1_01_title.png
+LOG Phase1: Title screen reached
+
+# Make sure caret is on GAME START (press UP)
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 5
+
+# Press Start to select GAME START
+HOLD START
+WAIT 3
+RELEASE START
+LOG Phase1: Start pressed on title screen
+
+# Wait for stage select screen to fully load
+WAIT 200
+
+SCREENSHOT phase1_02_stage_select.png
+LOG Phase1: Stage select visible
+DUMP_RAM 31 1
+DUMP_RAM 46 1
+DUMP_RAM 22 1
+
+# Move to a boss (default is Needle Man at top-right)
+# Move LEFT to Snake Man (center top)
+HOLD LEFT
+WAIT 5
+RELEASE LEFT
+WAIT 10
+
+SCREENSHOT phase1_03_boss_picked.png
+LOG Phase1: Boss highlighted, pressing Start to enter stage
+
+# Press Start to enter the stage
+HOLD START
+WAIT 3
+RELEASE START
+
+# Wait for stage loading / transition
+WAIT 300
+
+SCREENSHOT phase1_04_stage_loading.png
+DUMP_RAM 31 1
+DUMP_RAM 46 1
+DUMP_RAM 22 1
+DUMP_RAM F4 2
+DUMP_RAM AE 1
+DUMP_RAM 0360 1
+DUMP_RAM 0380 1
+DUMP_RAM 03C0 1
+DUMP_RAM DB 1
+DUMP_RAM DC 8
+LOG Phase1: Stage load state captured
+
+# Wait more to see if player spawns
+WAIT 300
+
+SCREENSHOT phase1_05_after_long_wait.png
+DUMP_RAM 31 1
+DUMP_RAM 0380 1
+DUMP_RAM 0360 1
+
+LOG Phase1: Done - check screenshots and RAM dumps
+EXIT 0

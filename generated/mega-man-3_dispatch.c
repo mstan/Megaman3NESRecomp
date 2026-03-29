@@ -18426,6 +18426,10 @@ void call_by_address(uint16_t addr) {
             func_A0F9_b2(); break;
         case 0xFAF6:
             func_FAF6(); break;
+        case 0xD5BA:
+            func_D5BA(); break;
+        case 0x8716:
+            func_8716_b4(); break;
         case 0xA6E3:
             func_A6E3_b2(); break;
         case 0xA733:

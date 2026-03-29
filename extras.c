@@ -8,6 +8,12 @@
 #include "nes_runtime.h"
 #include "debug_server.h"
 #include "verify_mode.h"
+
+/* Sound engine tick — lives in the fixed bank at $FF90.
+ * On real hardware, the NMI trampoline at $C121 calls this every frame.
+ * In the recomp, RTI returns from func_C000 via C return, so $C121 is
+ * never reached.  We call it explicitly after the NMI handler. */
+extern void func_FF90(void);
 #ifdef ENABLE_NESTOPIA_ORACLE
 #include "nestopia_bridge.h"
 #endif
@@ -59,6 +65,10 @@ const char *game_arg_usage(void) {
 
 void game_run_nmi(void) {
     verify_mode_run_nmi();
+    /* TODO: Sound engine tick (func_FF90) needed but has dispatch misses
+     * due to jump_local_ptr pattern ($8023) in the sound engine banks.
+     * The recompiler doesn't handle the PLA-return-address-as-data pattern.
+     * Need to add inline_dispatch entries to game.cfg for bank 11. */
 }
 
 void game_run_main(void) { func_RESET(); }

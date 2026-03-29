@@ -1,0 +1,149 @@
+# Phase 4: Weapon test — give all weapons, cycle and fire each
+TURBO ON
+
+# Navigate: title -> stage select -> Snake Man
+WAIT 400
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 5
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+HOLD LEFT
+WAIT 5
+RELEASE LEFT
+WAIT 10
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 400
+
+LOG Phase4: In stage, injecting all weapons
+
+# Give all 8 weapons full energy ($1C = 28 = max)
+WRITE_RAM8 A2 1C
+WRITE_RAM8 A3 1C
+WRITE_RAM8 A4 1C
+WRITE_RAM8 A5 1C
+WRITE_RAM8 A6 1C
+WRITE_RAM8 A7 1C
+WRITE_RAM8 A8 1C
+WRITE_RAM8 A9 1C
+
+# Give 9 lives
+WRITE_RAM8 AE 09
+
+SAVE_STATE C:/temp/phase4_armed.sav
+SCREENSHOT phase4_00_armed.png
+
+# --- Weapon 1: Needle Cannon ($A0=01) ---
+LOG Phase4: Testing Needle Cannon
+WRITE_RAM8 A0 01
+WAIT 10
+HOLD RIGHT
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 5
+HOLD B
+WAIT 20
+RELEASE B
+RELEASE RIGHT
+WAIT 10
+SCREENSHOT phase4_01_needle.png
+DUMP_RAM A0 1
+DUMP_RAM A2 1
+
+# --- Weapon 2: Magnet Missile ($A0=02) ---
+LOG Phase4: Testing Magnet Missile
+WRITE_RAM8 A0 02
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 20
+SCREENSHOT phase4_02_magnet.png
+DUMP_RAM A3 1
+
+# --- Weapon 3: Gemini Laser ($A0=03) ---
+LOG Phase4: Testing Gemini Laser
+WRITE_RAM8 A0 03
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 30
+SCREENSHOT phase4_03_gemini.png
+DUMP_RAM A4 1
+
+# --- Weapon 4: Hard Knuckle ($A0=04) ---
+LOG Phase4: Testing Hard Knuckle
+WRITE_RAM8 A0 04
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 30
+SCREENSHOT phase4_04_hard.png
+DUMP_RAM A5 1
+
+# --- Weapon 5: Top Spin ($A0=05) ---
+LOG Phase4: Testing Top Spin
+WRITE_RAM8 A0 05
+WAIT 10
+HOLD A
+WAIT 15
+RELEASE A
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 20
+SCREENSHOT phase4_05_top.png
+DUMP_RAM A6 1
+
+# --- Weapon 6: Search Snake ($A0=06) ---
+LOG Phase4: Testing Search Snake
+WRITE_RAM8 A0 06
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 30
+SCREENSHOT phase4_06_snake.png
+DUMP_RAM A7 1
+
+# --- Weapon 7: Spark Shock ($A0=07) ---
+LOG Phase4: Testing Spark Shock
+WRITE_RAM8 A0 07
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 30
+SCREENSHOT phase4_07_spark.png
+DUMP_RAM A8 1
+
+# --- Weapon 8: Shadow Blade ($A0=08) ---
+LOG Phase4: Testing Shadow Blade
+WRITE_RAM8 A0 08
+WAIT 10
+HOLD B
+WAIT 20
+RELEASE B
+WAIT 30
+SCREENSHOT phase4_08_shadow.png
+DUMP_RAM A9 1
+
+# --- Return to Mega Buster ---
+WRITE_RAM8 A0 00
+WAIT 10
+SCREENSHOT phase4_09_buster_restored.png
+
+# Dump final weapon energy state
+LOG Phase4: Final weapon energy dump
+DUMP_RAM A0 10
+
+LOG Phase4: Weapon test complete
+EXIT 0
