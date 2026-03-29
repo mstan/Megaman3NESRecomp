@@ -1,0 +1,57 @@
+# Fiber scheduler test — generous waits for proper navigation
+TURBO ON
+LOG Boot...
+WAIT 1200
+
+SCREENSHOT f_01_should_be_title.png
+
+# Press Start on title
+HOLD START
+WAIT 5
+RELEASE START
+LOG Start pressed on title
+
+WAIT 600
+
+SCREENSHOT f_02_should_be_stageselect.png
+
+# Press Up to pick a boss
+HOLD UP
+WAIT 5
+RELEASE UP
+WAIT 100
+
+# Press Start to enter stage
+HOLD START
+WAIT 5
+RELEASE START
+LOG Entering stage...
+
+# Capture the transition densely
+WAIT 30
+SCREENSHOT f_03_30.png
+WAIT 30
+SCREENSHOT f_04_60.png
+WAIT 30
+SCREENSHOT f_05_90.png
+WAIT 60
+SCREENSHOT f_06_150.png
+WAIT 60
+SCREENSHOT f_07_210.png
+WAIT 60
+SCREENSHOT f_08_270.png
+WAIT 120
+SCREENSHOT f_09_390.png
+WAIT 120
+SCREENSHOT f_10_510.png
+WAIT 120
+SCREENSHOT f_11_630.png
+WAIT 180
+SCREENSHOT f_12_810.png
+WAIT 180
+SCREENSHOT f_13_990.png
+WAIT 300
+SCREENSHOT f_14_1290.png
+
+LOG Done
+EXIT 0

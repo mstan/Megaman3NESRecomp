@@ -111,8 +111,83 @@ The sound engine at `$FF90`:
 
 The sound engine uses `jump_local_ptr` at `$8023` which reads inline data from after the JSR call site. This pattern is incompatible with the recomp's C function call semantics and needs recompiler-level support.
 
+## Issue 6: Robot master intro cinematic skipped (coroutine scheduler broken)
+**Severity:** Critical
+**When:** Entering a stage from stage select
+**Symptom:** Stage loads directly — boss name card, portrait, and teleport-down
+animation are all missing. The stage geometry appears immediately.
+
+**Root cause:** The coroutine scheduler at `$FEAA` uses TXS/TSX + PLA/RTS to
+save and resume cooperative coroutines via the 6502 hardware stack. In the recomp,
+JSR becomes a C function call (no return address pushed to the 6502 stack), and
+RTS becomes `return;` (no stack pop/dispatch). This means:
+
+1. The scheduler's resume-RTS finds no valid return address on the 6502 stack
+2. Even with `push_all_jsr` (which fixes the stack data), the resume via
+   `call_by_address` starts a fresh C call — the nested call chain above the
+   resume point is lost
+3. Each resume/yield cycle pops 6 bytes (PLA+PLA+RTS) without replenishing them,
+   so the saved stack pointer drifts upward into uninitialized memory
+
+**What works so far:**
+- `push_all_jsr` in game.cfg: all JSRs push return addresses to the 6502 stack ✓
+- `replace_func -1 FEAA` in extras.c: scheduler reads channel table, does
+  PLA/PLA, dispatches resume address via call_by_address ✓
+- 6502 stack contains valid return addresses ✓
+
+**What's broken:** After `call_by_address(resume_addr)`, the coroutine runs in a
+fresh C call frame. When it hits RTS, it returns to the scheduler (or nowhere),
+not to the function that originally called it. The full nested call chain that was
+on the 6502 stack is not represented in the C call stack.
+
+**Example:** A coroutine does `JSR game_logic` → `JSR sub_func` → `JSR FF21`
+(yield). The 6502 stack holds return addresses for all three JSRs. On resume, the
+real CPU continues inside `sub_func`, which returns to `game_logic`, which
+eventually yields again. In the recomp, `call_by_address(sub_func_resume)` enters
+`sub_func` from the resume point, but its RTS has nowhere to return to — the
+`game_logic` frame doesn't exist on the C call stack.
+
+### Solution approaches (in priority order)
+
+**Approach 1: setjmp/longjmp**
+Save the C execution context when a coroutine yields (`setjmp`), restore it on
+resume (`longjmp`). This preserves the full C call stack.
+- `func_FF21` (yield): `setjmp(coroutine_ctx[ch])`, then return up the C stack
+- Scheduler resume: `longjmp(coroutine_ctx[ch], 1)` instead of `call_by_address`
+- Pros: standard C, portable, minimal code change
+- Cons: all functions between yield and scheduler must be on the C stack at
+  setjmp time; if the scheduler is called from a different stack depth the
+  jmp_buf is invalid
+
+**Approach 2: OS fibers (Windows Fibers / POSIX ucontext)**
+Each coroutine channel gets its own OS-level execution context with a separate C
+stack. The scheduler switches between fibers.
+- `func_FF21` (yield): `SwitchToFiber(scheduler_fiber)`
+- Scheduler resume: `SwitchToFiber(channel_fiber[ch])`
+- Pros: true coroutine semantics, each channel has its own C stack, no jmp_buf
+  lifetime issues
+- Cons: platform-specific, needs per-fiber stack allocation
+
+**Approach 3: State-machine restructuring**
+Analyze each coroutine function and rewrite it as a state machine where each
+resume point is a proper function entry. The scheduler sets a state variable and
+calls the entry point.
+- Pros: no OS dependencies, works with plain C calls
+- Cons: extremely invasive, per-game analysis, not game-agnostic, fragile
+
+### Observed dispatch misses during scheduler resume
+These are mid-function return addresses that need `extra_label` entries if
+approach 1 or 2 doesn't fully resolve them:
+- `$C0BB` (inside NMI handler, after `JSR $FF41`)
+- `$FF2B` (inside `func_FF21`, after `JSR $FF14`)
+- `$FFC2` (inside `func_FF6B`, after `JSR $8000`)
+- `$F690` (fixed bank)
+- `$B001` (switchable bank 12)
+
+---
+
 ## General Notes
-- Title screen, stage select, and gameplay are fully working
+- Title screen, stage select, and gameplay are fully working (minus intro cutscene)
 - All 8 special weapons fire correctly via RAM injection
 - Enemies spawn and interact with the player
 - Zero critical dispatch misses during gameplay (only sound engine bank 13 misses remain)

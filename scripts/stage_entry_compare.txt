@@ -1,0 +1,47 @@
+# Boot to stage entry, dump channel table at key moments
+LOG Booting...
+WAIT 500
+
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 30
+
+# Dump channel table before stage entry
+LOG === Before stage entry ===
+DUMP_RAM 80 32
+DUMP_RAM 90 16
+
+HOLD START
+WAIT 3
+RELEASE START
+
+# Dump at intervals during transition
+WAIT 30
+LOG === +30 frames ===
+DUMP_RAM 80 32
+DUMP_RAM 90 16
+DUMP_RAM 0100 64
+
+WAIT 30
+LOG === +60 frames ===
+DUMP_RAM 80 32
+DUMP_RAM 90 16
+
+WAIT 60
+LOG === +120 frames ===
+DUMP_RAM 80 32
+DUMP_RAM 90 16
+
+WAIT 120
+LOG === +240 frames ===
+DUMP_RAM 80 32
+DUMP_RAM 90 16
+
+WAIT 36000
+EXIT 0

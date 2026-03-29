@@ -1,0 +1,80 @@
+# Detailed intro: capture every moment of the boss intro transition
+# No TURBO - real-time frame counts
+
+LOG Booting, waiting for title screen...
+WAIT 500
+
+LOG Title screen - pressing Start
+HOLD START
+WAIT 3
+RELEASE START
+
+# Wait for stage select to fully load
+WAIT 200
+
+LOG Stage select up - pressing Up then Start
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 30
+
+# Save state right before pressing Start on stage select
+SAVE_STATE C:/temp/pre_stage_entry.sav
+
+HOLD START
+WAIT 3
+RELEASE START
+
+# Now capture densely during the transition
+# This is where the robot master intro should play
+WAIT 10
+SCREENSHOT trans_010.png
+WAIT 10
+SCREENSHOT trans_020.png
+WAIT 10
+SCREENSHOT trans_030.png
+WAIT 10
+SCREENSHOT trans_040.png
+WAIT 10
+SCREENSHOT trans_050.png
+WAIT 10
+SCREENSHOT trans_060.png
+WAIT 20
+SCREENSHOT trans_080.png
+WAIT 20
+SCREENSHOT trans_100.png
+WAIT 20
+SCREENSHOT trans_120.png
+WAIT 20
+SCREENSHOT trans_140.png
+WAIT 20
+SCREENSHOT trans_160.png
+WAIT 20
+SCREENSHOT trans_180.png
+WAIT 30
+SCREENSHOT trans_210.png
+WAIT 30
+SCREENSHOT trans_240.png
+WAIT 30
+SCREENSHOT trans_270.png
+WAIT 30
+SCREENSHOT trans_300.png
+WAIT 60
+SCREENSHOT trans_360.png
+WAIT 60
+SCREENSHOT trans_420.png
+WAIT 60
+SCREENSHOT trans_480.png
+WAIT 60
+SCREENSHOT trans_540.png
+WAIT 60
+SCREENSHOT trans_600.png
+WAIT 120
+SCREENSHOT trans_720.png
+WAIT 120
+SCREENSHOT trans_840.png
+WAIT 120
+SCREENSHOT trans_960.png
+
+LOG Transition capture complete
+EXIT 0

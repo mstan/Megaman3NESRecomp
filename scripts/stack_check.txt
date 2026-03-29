@@ -1,0 +1,23 @@
+# Quick check: dump stack page after a few frames of gameplay
+LOG Booting...
+WAIT 500
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 30
+HOLD START
+WAIT 3
+RELEASE START
+
+WAIT 60
+LOG === Stack page dump ===
+DUMP_RAM 0180 128
+DUMP_RAM 0100 128
+LOG === CPU S register check via channel table ===
+DUMP_RAM 80 32
+
+EXIT 0

@@ -1,0 +1,64 @@
+# Test with fiber scheduler — use RAM waits instead of fixed frame counts
+TURBO ON
+LOG Waiting for title screen...
+
+# Wait for title screen to be ready (check a few indicators)
+WAIT 800
+
+SCREENSHOT fiber_01_title.png
+LOG Title screen
+
+# Press Start
+HOLD START
+WAIT 3
+RELEASE START
+LOG Start pressed
+
+# Wait for stage select
+WAIT 400
+
+SCREENSHOT fiber_02_stage_select.png
+LOG Stage select
+
+# Press Up to pick a boss
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 60
+
+SCREENSHOT fiber_03_boss_picked.png
+
+# Press Start to enter stage
+HOLD START
+WAIT 3
+RELEASE START
+LOG Entering stage...
+
+# Dense capture during transition
+WAIT 30
+SCREENSHOT fiber_04_trans_030.png
+WAIT 30
+SCREENSHOT fiber_05_trans_060.png
+WAIT 30
+SCREENSHOT fiber_06_trans_090.png
+WAIT 30
+SCREENSHOT fiber_07_trans_120.png
+WAIT 60
+SCREENSHOT fiber_08_trans_180.png
+WAIT 60
+SCREENSHOT fiber_09_trans_240.png
+WAIT 60
+SCREENSHOT fiber_10_trans_300.png
+WAIT 120
+SCREENSHOT fiber_11_trans_420.png
+WAIT 120
+SCREENSHOT fiber_12_trans_540.png
+WAIT 120
+SCREENSHOT fiber_13_trans_660.png
+WAIT 180
+SCREENSHOT fiber_14_trans_840.png
+WAIT 180
+SCREENSHOT fiber_15_trans_1020.png
+
+LOG Done
+EXIT 0
