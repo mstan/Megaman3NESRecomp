@@ -93,39 +93,109 @@ int verify_mode_run_nmi(void) {
         }
     }
 
-    /* Also compare CHR/VRAM tile $00 at $1000 (BG pattern table) */
+    /* Compare PPU visual state: CHR-RAM, nametables, framebuffer */
     static uint8_t emu_vram[0x4000];
     int vram_size = 0;
     nestopia_bridge_get_vram(emu_vram, &vram_size);
 
-    /* Log CHR tile $00 comparison on first few frames */
-    /* Compare framebuffer pixels to detect CHR bank mismatch */
-    if (g_frame_count == 600) {
-        static uint32_t emu_fb[256*240];
-        nestopia_bridge_get_framebuf_argb(emu_fb);
-        /* Pixel (4,4) is deep inside tile $00 at nametable position (0,0) */
-        uint32_t ep = emu_fb[4*256+4] & 0xFFFFFF;
-        /* Pixel (128,120) is mid-screen, also tile $00 area */
-        uint32_t ep2 = emu_fb[120*256+128] & 0xFFFFFF;
-        fprintf(stderr, "[verify] EMU pixels: (4,4)=0x%06X (128,120)=0x%06X\n", ep, ep2);
-        fprintf(stderr, "[verify] NATIVE chr[0x1000]=%02X%02X%02X%02X chr[0x0000]=%02X%02X%02X%02X\n",
-                g_chr_ram[0x1000], g_chr_ram[0x1001], g_chr_ram[0x1002], g_chr_ram[0x1003],
-                g_chr_ram[0x0000], g_chr_ram[0x0001], g_chr_ram[0x0002], g_chr_ram[0x0003]);
-        fprintf(stderr, "[verify] native $76=%02X $77=%02X emu $76=%02X $77=%02X\n",
-                g_ram[0x76], emu_ram[0x76], g_ram[0x77], emu_ram[0x77]);
+    /* Compare CHR-RAM (tile data the renderer reads) */
+    int chr_diff_count = 0;
+    int chr_first_addr = -1;
+    /* Nestopia VRAM for CHR-ROM mappers may not contain CHR data in the
+     * same layout. Compare nametable region instead ($2000-$2FFF → offset
+     * 0x2000 in VRAM, which maps to our g_ppu_nt[0..0xFFF]). */
+    int nt_diff_count = 0;
+    int nt_first_addr = -1;
+    if (vram_size >= 0x3000) {
+        for (int i = 0; i < 0x1000; i++) {
+            if (g_ppu_nt[i] != emu_vram[0x2000 + i]) {
+                if (nt_diff_count == 0) nt_first_addr = 0x2000 + i;
+                nt_diff_count++;
+            }
+        }
     }
 
-    int passed = (diff_count == 0);
+    /* Compare rendered framebuffer — the ultimate visual truth */
+    static uint32_t native_fb[256 * 240];
+    static uint32_t emu_fb[256 * 240];
+    ppu_render_frame(native_fb);
+    nestopia_bridge_get_framebuf_argb(emu_fb);
+
+    int pixel_diff_count = 0;
+    int pixel_first_x = -1, pixel_first_y = -1;
+    for (int i = 0; i < 256 * 240; i++) {
+        /* Compare RGB only (ignore alpha) */
+        if ((native_fb[i] & 0xFFFFFF) != (emu_fb[i] & 0xFFFFFF)) {
+            if (pixel_diff_count == 0) {
+                pixel_first_x = i % 256;
+                pixel_first_y = i / 256;
+            }
+            pixel_diff_count++;
+        }
+    }
+
+    /* Save comparison images periodically when pixels differ */
+    if (pixel_diff_count > 0 && g_frame_count % 120 == 0) {
+        extern void save_png(const char *path, int w, int h, const void *rgb, int stride);
+        static uint8_t rgb[256 * 240 * 3];
+        char path[128];
+
+        /* Native framebuffer */
+        for (int i = 0; i < 256 * 240; i++) {
+            rgb[i*3+0] = (native_fb[i] >> 16) & 0xFF;
+            rgb[i*3+1] = (native_fb[i] >>  8) & 0xFF;
+            rgb[i*3+2] =  native_fb[i]        & 0xFF;
+        }
+        snprintf(path, sizeof(path), "C:/temp/verify_native_%04llu.png",
+                 (unsigned long long)g_frame_count);
+        save_png(path, 256, 240, rgb, 256 * 3);
+
+        /* Emulator framebuffer */
+        for (int i = 0; i < 256 * 240; i++) {
+            rgb[i*3+0] = (emu_fb[i] >> 16) & 0xFF;
+            rgb[i*3+1] = (emu_fb[i] >>  8) & 0xFF;
+            rgb[i*3+2] =  emu_fb[i]        & 0xFF;
+        }
+        snprintf(path, sizeof(path), "C:/temp/verify_emu_%04llu.png",
+                 (unsigned long long)g_frame_count);
+        save_png(path, 256, 240, rgb, 256 * 3);
+
+        /* Diff image: red where pixels differ, black where they match */
+        for (int i = 0; i < 256 * 240; i++) {
+            if ((native_fb[i] & 0xFFFFFF) != (emu_fb[i] & 0xFFFFFF)) {
+                rgb[i*3+0] = 255; rgb[i*3+1] = 0; rgb[i*3+2] = 0;
+            } else {
+                rgb[i*3+0] = 0; rgb[i*3+1] = 0; rgb[i*3+2] = 0;
+            }
+        }
+        snprintf(path, sizeof(path), "C:/temp/verify_diff_%04llu.png",
+                 (unsigned long long)g_frame_count);
+        save_png(path, 256, 240, rgb, 256 * 3);
+    }
+
+    int passed = (diff_count == 0) && (pixel_diff_count == 0);
 
     if (!passed) {
         s_divergence_count++;
-        fprintf(stderr, "[verify] DIVERGE frame %llu: %d bytes differ | first: $%04X native=0x%02X emu=0x%02X"
-                " | $76:N=%02X/E=%02X $77:N=%02X/E=%02X $0636:N=%02X/E=%02X $0248:N=%02X/E=%02X\n",
-                (unsigned long long)g_frame_count, diff_count,
-                first_diff_addr, first_native, first_emu,
-                g_ram[0x76], emu_ram[0x76], g_ram[0x77], emu_ram[0x77],
-                g_ram[0x636 & 0x7FF], emu_ram[0x636 & 0x7FF],
-                g_ram[0x248], emu_ram[0x248]);
+        if (diff_count > 0) {
+            fprintf(stderr, "[verify] DIVERGE frame %llu: RAM %d bytes | first: $%04X native=0x%02X emu=0x%02X"
+                    " | $F8:N=%02X/E=%02X $78:N=%02X/E=%02X $5E:N=%02X/E=%02X $9B:N=%02X/E=%02X\n",
+                    (unsigned long long)g_frame_count, diff_count,
+                    first_diff_addr, first_native, first_emu,
+                    g_ram[0xF8], emu_ram[0xF8], g_ram[0x78], emu_ram[0x78],
+                    g_ram[0x5E], emu_ram[0x5E], g_ram[0x9B], emu_ram[0x9B]);
+        }
+        if (nt_diff_count > 0) {
+            fprintf(stderr, "[verify] DIVERGE frame %llu: NT %d bytes | first: $%04X\n",
+                    (unsigned long long)g_frame_count, nt_diff_count, nt_first_addr);
+        }
+        if (pixel_diff_count > 0) {
+            fprintf(stderr, "[verify] DIVERGE frame %llu: PIXELS %d differ | first: (%d,%d) native=0x%06X emu=0x%06X\n",
+                    (unsigned long long)g_frame_count, pixel_diff_count,
+                    pixel_first_x, pixel_first_y,
+                    native_fb[pixel_first_y * 256 + pixel_first_x] & 0xFFFFFF,
+                    emu_fb[pixel_first_y * 256 + pixel_first_x] & 0xFFFFFF);
+        }
     }
 
     return passed;

@@ -11,7 +11,7 @@ if "%1"=="clean" (
 )
 
 if not exist build\CMakeCache.txt (
-    %CMAKE% -S . -B build -G "Visual Studio 17 2022" -A x64 -DENABLE_NESTOPIA_ORACLE=OFF
+    %CMAKE% -S . -B build -G "Visual Studio 17 2022" -A x64 -DENABLE_NESTOPIA_ORACLE=ON
     echo cmake configure done, errorlevel=%errorlevel%
 )
 

@@ -56,6 +56,8 @@ if(WIN32)
     )
 endif()
 
+target_compile_definitions(MegaMan3Recomp PRIVATE RECOMP_STACK_TRACKING)
+
 if(MSVC)
     target_compile_options(MegaMan3Recomp PRIVATE /W3 /WX-)
     target_compile_options(MegaMan3Recomp PRIVATE /wd4102)
