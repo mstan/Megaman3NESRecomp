@@ -2,36 +2,79 @@
 
 Read CLAUDE.md first. Follow its debugging protocol EXACTLY.
 
+## Priority: MMC3 8KB Bank Dispatch (42,645 dispatch misses per run)
+
+### The Problem
+
+The recompiler uses 16KB bank granularity but MMC3 switches 8KB banks independently via R6/R7. When an odd 8KB bank is mapped (e.g., R6=9), `g_current_bank = r6/2 = 4` selects functions generated from the WRONG 8KB half of the 16KB bank.
+
+**Measured:** Running `scripts/navigate_to_stage.txt` produces **42,645 dispatch misses** — all from 8 unique addresses:
+
+| Address | Bank | Frequency | Cause |
+|---------|------|-----------|-------|
+| $8000 | 4 | ~6,000/run | Odd R6 → wrong 8KB half |
+| $8003 | 4 | ~6,000/run | Same |
+| $8006 | 4 | ~6,000/run | Same |
+| $8009 | 4 | ~6,000/run | Same |
+| $800C | 4 | ~6,000/run | Same |
+| $800F | 4 | ~6,000/run | Same |
+| $8012 | 4 | ~6,000/run | Same |
+| $A000 | 12 | ~600/run | Likely even R7 → wrong 8KB half |
+
+These misses mean **game code is NOT executing** — enemy AI, sprite processing, and other gameplay functions dispatched during odd-R6 frames are silently skipped. The game appears to work but behaviors are missing.
+
+### What Needs to Happen
+
+The dispatch table must handle MMC3's 8KB bank switching. When R6 is odd and the dispatch address is in $8000-$9FFF, the correct function is from the SECOND 8KB of the 16KB bank (the recompiler generated this data at $A000-$BFFF addresses).
+
+**Approach options:**
+
+1. **Address remapping in dispatch**: When R6 is odd and addr is $8000-$9FFF, remap addr += $2000 before the switch. Requires function entries at the remapped addresses ($A000+) to exist. Currently many don't because the $A000 range is marked as data_region in some banks.
+
+2. **Dual bank tracking**: Track `g_current_bank_8000` (from R6) and `g_current_bank_a000` (from R7) separately. Modify dispatch to use the appropriate one based on address range. Requires code generator changes.
+
+3. **8KB bank granularity**: Change the recompiler to use 8KB bank indices (0-31) instead of 16KB (0-15). Most thorough but most invasive — affects function naming, dispatch table, bank tracking, all games.
+
+**Infrastructure already in place:**
+- `g_mmc3_r6_odd` and `g_mmc3_r7_even` flags are tracked in `mapper.c`
+- `is_mostly_illegal()` filter in `code_generator.c` prevents data-as-code dispatch
+- `skip_illegal_bodies` game.toml flag (default: true) for opt-out
+
+### Key Files for This Fix
+
+| File | What to change |
+|------|---------------|
+| `recompiler/src/code_generator.c` | Dispatch table emission — add 8KB-aware remapping |
+| `runner/src/mapper.c` | Already tracks `g_mmc3_r6_odd`/`g_mmc3_r7_even` |
+| `runner/include/nes_runtime.h` | Already declares the tracking vars |
+| `game.toml` | May need to remove/adjust data_regions for bank 4's $A000 range |
+
+### How to Verify
+
+```bash
+# Run with stage navigation script, capture dispatch misses
+build/Release/MegaMan3Recomp.exe "Mega-Man 3 # NES.NES" --script scripts/navigate_to_stage.txt > C:/temp/output.txt 2>&1
+
+# Count misses (target: 0)
+grep -c "MISS" C:/temp/output.txt
+```
+
 ## Session 7 Results (2026-04-05)
 
 ### Issue 9 (Stage Flicker): FIXED
+Root cause: data-as-code execution from MMC3 8KB/16KB bank mismatch corrupted $FD.
+See ISSUES.md for full details.
 
-The stage background tile flicker is resolved. $FD = 0x00 on both native and emulated builds. Background tiles render stably.
+### Codegen Size Reduction: 78MB → 30MB
+`is_mostly_illegal()` filter stubs functions with >75% illegal opcodes.
+Configurable: `skip_illegal_bodies = false` in game.toml to disable.
+Validated backwards-compatible with SMB, Zelda, Faxanadu.
 
-**Root cause:** MMC3 8KB/16KB bank mismatch. The recompiler uses 16KB banks, but MMC3 switches 8KB banks. When R6 was odd (e.g., R6=9), `g_current_bank = r6/2 = 4` dispatched to functions generated from the wrong 8KB half — data tables instead of code. These "functions" contained illegal opcodes that corrupted RAM ($FD scroll state).
+## Other Known Issues
 
-**Fixes applied:**
-1. `ppu_renderer.c`: IRQ I-flag check + set (`!g_cpu.I` guard, `g_cpu.I = 1`)
-2. `mapper.c`: 8KB alignment tracking vars (`g_mmc3_r6_odd`, `g_mmc3_r7_even`)
-3. `code_generator.c`: Dispatch filter — skip bank variants with >50% illegal opcodes
-4. `game.toml`: 15 missing IRQ handler addresses from vector tables at $C4C8/$C4DA
-5. `game.toml`: Bank 4 $8000-$A000 data region (8KB bank 8 is data tables)
-
-## Known Remaining Issues
-
-### Issue 4: No audio (sound engine)
-The sound engine uses `jump_local_ptr` at $8023 (PLA reads JSR return address as data pointer). Needs recompiler-level pattern support. Low priority — gameplay unaffected.
-
-### Issue 6: Robot master intro cinematic (coroutine)
-Fibers are implemented but the intro cutscene has visual glitches. Needs PPU state comparison during cutscene sequence.
-
-### Issue 8: Robot master cutscene background glitch
-Related to Issue 6. Visual artifacts during the boss intro.
-
-### Architectural: MMC3 8KB bank dispatch
-The illegal opcode filter (fix 3) is a MITIGATION, not a proper fix. The recompiler needs 8KB-granularity dispatch for MMC3 to correctly handle odd R6/even R7 bank configurations. When R6 is odd, addresses $8000-$9FFF contain code from the second 8KB of the 16KB bank, but dispatch selects functions from the first 8KB.
-
-**Impact:** Some game functions dispatched during odd-R6 contexts may dispatch-miss instead of executing. This could manifest as missing gameplay behaviors (enemies not processing, etc.) depending on which 8KB banks the game uses.
+- **Issue 4**: No audio (sound engine uses `jump_local_ptr` — needs recompiler support)
+- **Issue 6**: Robot master intro cinematic glitches (coroutine/fiber visual issues)
+- **Issue 8**: Robot master cutscene background glitch (related to Issue 6)
 
 ## Build Commands
 
