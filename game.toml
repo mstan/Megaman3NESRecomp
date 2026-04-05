@@ -8,14 +8,6 @@ push_all_jsr = true
 [[inline_dispatch]]
 addr = 0x8023
 
-[[replace_func]]
-bank = -1
-addr = 0xFEAA
-
-[[replace_func]]
-bank = -1
-addr = 0xFF21
-
 [[data_region]]
 bank = 11
 start = 0x8023
