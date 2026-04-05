@@ -236,11 +236,6 @@ bank = 3
 start = 0xA99F
 end = 0xC007
 
-[[data_region]]
-bank = 4
-start = 0xA000
-end = 0xC000
-
 # 8KB bank 8 ($8000-$9FFF of 16KB bank 4) is entirely data tables.
 # Without this, the function finder auto-discovers garbage "functions"
 # that execute illegal opcodes and corrupt RAM (including $FD scroll state).
