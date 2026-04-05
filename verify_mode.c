@@ -12,6 +12,9 @@
 #include "nes_snapshot.h"
 #include "nes_runtime.h"
 #include "debug_server.h"
+#ifdef ENABLE_NESTOPIA_ORACLE
+#include "nestopia_bridge.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -94,24 +97,28 @@ int verify_mode_run_nmi(void) {
     }
 
     /* Compare PPU visual state: CHR-RAM, nametables, framebuffer */
-    static uint8_t emu_vram[0x4000];
-    int vram_size = 0;
-    nestopia_bridge_get_vram(emu_vram, &vram_size);
+    static uint8_t emu_chr[0x2000];
+    static uint8_t emu_nt[0x1000];
+    nestopia_bridge_get_chr_ram(emu_chr, 0x2000);
+    nestopia_bridge_get_nametable(emu_nt, 0x1000);
 
     /* Compare CHR-RAM (tile data the renderer reads) */
     int chr_diff_count = 0;
     int chr_first_addr = -1;
-    /* Nestopia VRAM for CHR-ROM mappers may not contain CHR data in the
-     * same layout. Compare nametable region instead ($2000-$2FFF → offset
-     * 0x2000 in VRAM, which maps to our g_ppu_nt[0..0xFFF]). */
+    for (int i = 0; i < 0x2000; i++) {
+        if (g_chr_ram[i] != emu_chr[i]) {
+            if (chr_diff_count == 0) chr_first_addr = i;
+            chr_diff_count++;
+        }
+    }
+
+    /* Compare nametables ($2000-$2FFF) */
     int nt_diff_count = 0;
     int nt_first_addr = -1;
-    if (vram_size >= 0x3000) {
-        for (int i = 0; i < 0x1000; i++) {
-            if (g_ppu_nt[i] != emu_vram[0x2000 + i]) {
-                if (nt_diff_count == 0) nt_first_addr = 0x2000 + i;
-                nt_diff_count++;
-            }
+    for (int i = 0; i < 0x1000; i++) {
+        if (g_ppu_nt[i] != emu_nt[i]) {
+            if (nt_diff_count == 0) nt_first_addr = 0x2000 + i;
+            nt_diff_count++;
         }
     }
 

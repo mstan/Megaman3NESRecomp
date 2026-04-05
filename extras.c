@@ -312,6 +312,40 @@ void game_run_main(void) {
 
             nestopia_bridge_get_ram(g_ram);
             nestopia_bridge_get_sram(g_sram);
+
+            /* Copy Nestopia CPU state to runner globals for ring buffer */
+            {
+                NestopiaCpuRegs cpu_regs;
+                nestopia_bridge_get_cpu_regs(&cpu_regs);
+                g_cpu.A = cpu_regs.a;
+                g_cpu.X = cpu_regs.x;
+                g_cpu.Y = cpu_regs.y;
+                g_cpu.S = cpu_regs.sp;
+                /* Unpack P flags */
+                g_cpu.C = (cpu_regs.p >> 0) & 1;
+                g_cpu.Z = (cpu_regs.p >> 1) & 1;
+                g_cpu.I = (cpu_regs.p >> 2) & 1;
+                g_cpu.D = (cpu_regs.p >> 3) & 1;
+                g_cpu.V = (cpu_regs.p >> 6) & 1;
+                g_cpu.N = (cpu_regs.p >> 7) & 1;
+            }
+
+            /* Copy Nestopia PPU state to runner globals for ring buffer */
+            {
+                NestopiaPpuRegs ppu_regs;
+                nestopia_bridge_get_ppu_regs(&ppu_regs);
+                g_ppuctrl     = ppu_regs.ctrl;
+                g_ppumask     = ppu_regs.mask;
+                g_ppuscroll_x = ppu_regs.scroll_x;
+                g_ppuscroll_y = ppu_regs.scroll_y;
+            }
+
+            /* Copy Nestopia VRAM to runner globals for ring buffer oracle comparison */
+            nestopia_bridge_get_chr_ram(g_chr_ram, 0x2000);
+            nestopia_bridge_get_nametable(g_ppu_nt, 0x1000);
+            nestopia_bridge_get_palette(g_ppu_pal);
+            nestopia_bridge_get_oam(g_ppu_oam);
+
             g_frame_count++;
 
             debug_server_record_frame();
@@ -342,7 +376,8 @@ uint8_t game_ram_read_hook(uint16_t pc, uint16_t addr, uint8_t val) {
 
 /* Per-frame ring buffer capture (game_data[16] in NESFrameRecord). */
 void game_fill_frame_record(void *record) {
-    uint8_t *d = (uint8_t *)record;
+    NESFrameRecord *fr = (NESFrameRecord *)record;
+    uint8_t *d = fr->game_data;
     d[0]  = g_ram[0x14];  d[1]  = g_ram[0x16];
     d[2]  = g_ram[0x31];  d[3]  = g_ram[0x46];
     d[4]  = g_ram[0xF4];  d[5]  = g_ram[0xF5];

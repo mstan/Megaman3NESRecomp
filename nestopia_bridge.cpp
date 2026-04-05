@@ -7,9 +7,18 @@
 #include "nestopia_bridge.h"
 #include "libretro.h"
 
+/* Nestopia core internals for PPU register access */
+#include "source/core/api/NstApiEmulator.hpp"
+#include "source/core/NstMachine.hpp"
+#include "source/core/NstPpu.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+/* Exposed by libretro.cpp */
+namespace Nes { namespace Api { class Emulator; } }
+extern Nes::Api::Emulator& nestopia_get_emulator_instance(void);
 
 /* ---- Libretro callbacks ---- */
 static uint32_t s_framebuf_xrgb8888[256 * 240];
@@ -171,23 +180,93 @@ void nestopia_bridge_write_ram(uint16_t addr, uint8_t val) {
     }
 }
 
-void nestopia_bridge_get_vram(uint8_t *out, int *out_size) {
-    if (!out || !out_size) return;
-    void *data = retro_get_memory_data(RETRO_MEMORY_VIDEO_RAM);
-    size_t size = retro_get_memory_size(RETRO_MEMORY_VIDEO_RAM);
-    *out_size = (int)size;
-    if (data && size > 0) {
-        int copy = size < 0x4000 ? (int)size : 0x4000;
-        memcpy(out, data, copy);
-    }
-}
-
 void nestopia_bridge_shutdown(void) {
     if (s_loaded) {
         retro_unload_game();
         s_loaded = false;
     }
     retro_deinit();
+}
+
+uint8_t nestopia_bridge_cpu_read(uint16_t addr) {
+    if (!s_loaded) return 0xFF;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    return (uint8_t)mach.cpu.Peek(addr);
+}
+
+void nestopia_bridge_get_ppu_regs(NestopiaPpuRegs *out) {
+    if (!out || !s_loaded) return;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    const Nes::Core::Ppu &ppu = mach.ppu;
+
+    /* ctrl[0] = PPUCTRL ($2000), ctrl[1] = PPUMASK ($2001) */
+    out->ctrl = (uint8_t)(ppu.GetCtrl(0) & 0xFF);
+    out->mask = (uint8_t)(ppu.GetCtrl(1) & 0xFF);
+
+    /* Scroll: reconstruct pixel-level X and Y from PPU internals.
+     * scroll.address holds current VRAM address:
+     *   bits 0-4:  coarse X (tile column)
+     *   bits 5-9:  coarse Y (tile row)
+     *   bits 12-14: fine Y scroll
+     * scroll.xFine holds fine X (0-7) */
+    unsigned addr = ppu.GetScrollAddress();
+    unsigned xFine = ppu.GetScrollXFine();
+    unsigned coarseX = addr & 0x1F;
+    unsigned coarseY = (addr >> 5) & 0x1F;
+    unsigned fineY = (addr >> 12) & 0x07;
+
+    out->scroll_x = (uint8_t)((coarseX << 3) | (xFine & 7));
+    out->scroll_y = (uint8_t)((coarseY << 3) | fineY);
+}
+
+void nestopia_bridge_get_chr_ram(uint8_t *out, int len) {
+    if (!out || !s_loaded) return;
+    if (len > 0x2000) len = 0x2000;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    Nes::Core::Ppu::ChrMem &chr = mach.ppu.GetChrMem();
+    for (int i = 0; i < len; i++)
+        out[i] = chr.Peek(i);
+}
+
+void nestopia_bridge_get_nametable(uint8_t *out, int len) {
+    if (!out || !s_loaded) return;
+    if (len > 0x1000) len = 0x1000;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    Nes::Core::Ppu::NmtMem &nmt = mach.ppu.GetNmtMem();
+    for (int i = 0; i < len; i++)
+        out[i] = nmt.Peek(i);
+}
+
+void nestopia_bridge_get_palette(uint8_t *out) {
+    if (!out || !s_loaded) return;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    const Nes::Core::Ppu::Palette &pal = mach.ppu.GetPalette();
+    memcpy(out, pal.ram, 0x20);
+}
+
+void nestopia_bridge_get_oam(uint8_t *out) {
+    if (!out || !s_loaded) return;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    const Nes::Core::Ppu::Oam &oam = mach.ppu.GetOam();
+    memcpy(out, oam.ram, 0x100);
+}
+
+void nestopia_bridge_get_cpu_regs(NestopiaCpuRegs *out) {
+    if (!out || !s_loaded) return;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    out->a  = (uint8_t)mach.cpu.GetA();
+    out->x  = (uint8_t)mach.cpu.GetX();
+    out->y  = (uint8_t)mach.cpu.GetY();
+    out->sp = (uint8_t)mach.cpu.GetSP();
+    out->p  = (uint8_t)mach.cpu.GetFlags();
+    out->pc = (uint16_t)mach.cpu.GetPC();
 }
 
 } /* extern "C" */
