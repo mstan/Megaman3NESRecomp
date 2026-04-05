@@ -19,10 +19,10 @@
 
 /* ---- External declarations ---- */
 extern void func_FF90(void);
-extern void call_by_address(uint16_t addr);
+extern int call_by_address(uint16_t addr);
 extern void func_C545(void);
 extern void func_FF14(void);
-extern void maybe_trigger_vblank(void);
+extern void maybe_trigger_vblank(int cycles);
 
 #include <windows.h>
 
@@ -79,7 +79,7 @@ static void CALLBACK sched_fiber_proc(LPVOID param) {
 
         int dispatched = 0;
         while (g_cpu.Y > 0) {
-            maybe_trigger_vblank();
+            maybe_trigger_vblank(1);
             uint8_t state = g_ram[0x80 + g_cpu.X];
 
             if (state >= 0x04) {
@@ -138,7 +138,7 @@ static void CALLBACK sched_fiber_proc(LPVOID param) {
             g_cpu.Y = (g_cpu.Y - 1) & 0xFF;
         }
 
-        if (!dispatched) maybe_trigger_vblank();
+        if (!dispatched) maybe_trigger_vblank(1);
     }
 }
 
@@ -246,6 +246,14 @@ const char *game_arg_usage(void) {
 
 void game_run_nmi(void) {
     verify_mode_run_nmi();
+
+    /* MM3's NMI handler at $C000 hijacks the RTI return address on the 6502
+     * stack, replacing it with $C121 — a trampoline that calls func_FF90
+     * (bank-switch dispatch / sound engine).  In the recompiled code RTI is
+     * just a C return, so the trampoline never runs and func_FF90 never gets
+     * called from NMI.  Call it explicitly here. */
+    if (g_run_mode == RUN_MODE_NATIVE || g_run_mode == RUN_MODE_VERIFY)
+        func_FF90();
 }
 
 void game_run_main(void) {

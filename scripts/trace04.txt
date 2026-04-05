@@ -1,0 +1,6 @@
+TURBO ON
+WAIT 100
+SCREENSHOT C:/temp/trace04_f100.png
+WAIT 2900
+SCREENSHOT C:/temp/trace04_f3000.png
+EXIT 0
