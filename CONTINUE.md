@@ -2,69 +2,61 @@
 
 Read CLAUDE.md first. Follow its debugging protocol EXACTLY.
 
-## Priority: Runtime Parity — Systematic Oracle Comparison
+## Priority: Remove extras.c Fiber Scheduler — Fix the Recompiler Instead
 
-Stop chasing individual bugs. The goal is **byte-level runtime parity** between the native recompiled build and the emulator oracle. Everything else (flicker, visual glitches, missing audio) flows from divergences in runtime state.
+### Root Cause Found
+
+The extras.c Windows Fiber coroutine scheduler is the **root cause of all gameplay divergences**. Systematic oracle comparison (session 9) proved this:
+
+- **0/20 aligned frames matched** between native and emulated
+- Scheduler state ($80-$8F) diverges from **frame 0** — never converges
+- Native channel 0 state = 0x04 (READY), emulated = 0x01 (active) — fundamentally different state machine
+- Native enters gameplay 241 frames earlier than emulator (frame 1453 vs 1694)
+- All downstream divergences (nametable, CHR, OAM, RAM, palette) cascade from scheduler mismatch
+
+### Why the Scheduler Exists (and Why It Shouldn't)
+
+MM3's coroutine scheduler at $FF00-$FF90 uses 6502 stack manipulation:
+- PHA/PLA to save/restore return addresses
+- RTS as computed goto (push address to stack, then RTS to jump)
+- Stack-relative reads to find the caller
+
+The recompiler can't handle these patterns, so extras.c has a ~200-line Windows Fiber reimplementation. **This violates the core rule: fix the tool, not the output.** The fix belongs in `code_generator.c` — teaching it to handle stack manipulation and RTS-as-goto patterns.
 
 ### Approach
 
-1. **Launch both builds** — native (TCP 4372) and emulated (TCP 4373)
-2. **Navigate to gameplay** using `scripts/navigate_to_stage.txt` or manual input
-3. **Sync state** between the two — match by game RAM values (game_mode, sub_mode, stage), NOT frame number
-4. **Dump ALL state from both** at the synced point:
-   - CPU RAM ($0000-$07FF)
-   - PPU registers (PPUCTRL, PPUMASK, PPUSTATUS, scroll, addr, latches)
-   - VRAM / Nametables ($2000-$2FFF)
-   - Palette ($3F00-$3F1F)
-   - CHR RAM (pattern tables $0000-$1FFF)
-   - OAM (sprite data)
-   - Mapper state (PRG/CHR bank mappings, IRQ latch/counter)
-   - Scheduler state (`sched_state` / `sched_stack`)
-5. **Diff everything** — byte-level comparison, produce a full divergence report
-6. **Repeat across a timeseries** — sample at multiple points during gameplay to find when each divergence first appears
-7. **Catalog ALL divergences** — don't fix anything yet. Build a complete list with:
-   - Address range
-   - First frame of divergence
-   - Native value vs emulated value
-   - Likely subsystem (codegen, runner PPU, runner mapper, timing, dispatch)
-8. **Prioritize by impact** — which divergences cascade into others? Fix root causes first.
-
-If TCP tooling is missing for any of the above state, **build it first** (see CLAUDE.md: "IF TOOLING IS MISSING → BUILD IT FIRST").
+1. **Understand the 6502 scheduler** — use Ghidra on the fixed bank ($FF00-$FF90) to document exactly what each function does with the stack
+2. **Check PATTERNS.md** in nesrecomp — these patterns (PLA/PHA touching return address, RTS as computed goto) are documented there
+3. **Implement codegen support** — add the pattern to code_generator.c so the recompiler generates correct C for the scheduler functions
+4. **Remove the Fiber scheduler from extras.c** — once the recompiler handles it, the manual implementation is dead weight
+5. **Re-run oracle comparison** to verify convergence
 
 ### What NOT to Do
 
-- Don't chase a single visual bug without full state context
-- Don't reason about what code "should" do — measure what it actually does
-- Don't modify generated code
-- Don't add printf debugging
-- Don't propose fixes without a measured divergence and traced write
+- Don't patch the Fiber scheduler to match Nestopia — that's fixing the wrong thing
+- Don't add more per-function overrides in game.toml — fix the pattern generically
+- Don't chase individual RAM divergences — they all flow from the scheduler
 
-### Known Open Issues (for reference, not for direct targeting)
-
-| Issue | Description |
-|-------|-------------|
-| Stage flicker | Background tile corruption during gameplay. Root cause unmeasured. |
-| 8KB dispatch misses | Bank 4 $A00F/$A00C/$A012/$A716, bank 12 $A000, bank 14 $BB34 |
-| No audio (Issue 4) | Sound engine uses `jump_local_ptr` — needs recompiler support |
-| Cinematic glitches (Issue 6/8) | Robot master intro/cutscene visual issues |
-
-### Session 8 Summary (2026-04-05)
+### Session 9 Summary (2026-04-05)
 
 **Committed changes:**
-- Removed `is_mostly_illegal` heuristic from nesrecomp (was masking bugs, broke other games)
-- Added `g_mmc3_bank_a000` = R7/2 tracking in mapper.c (infrastructure for future 8KB dispatch)
-- Removed no-op data_region for bank 4 $A000-$C000
+- Full Nestopia oracle bridge (CPU, PPU, VRAM, OAM sync from Nestopia internals)
+- Fixed game_fill_frame_record corrupting ring buffer frame_number field
+- MMC3 mapper state in get_frame/mapper_state TCP commands
+- tools/full_compare.py — systematic dual-instance comparison tool
+- Nestopia-core: accessor methods for PPU, CPU, mapper state extraction
 
 **Key findings:**
-- `data_region` is ONLY for the pointer scanner — it does NOT prevent function generation via BFS. Using it for code generation stubbed 1060 functions and crashed the game.
-- The `$8000` seed in function_finder.c blindly seeds every bank. Garbage functions from data banks are created via BFS from fixed-bank JSRs.
-- Bank 4's lower 8KB is data, upper 8KB is code. The recompiler's 16KB granularity can't distinguish them. Future fix: multi-pass function discovery (pass 1: discover reachable bank+addr pairs; pass 2: generate only those).
+- Divergence catalog: 374 unique entries across 20 aligned frames
+- Nametable (57920 occurrences), CHR_RAM (36600), CPU_RAM (4397), OAM (751), Palette (206), Mapper (140), CPU (73), PPU (35)
+- ALL divergences trace back to scheduler state mismatch from frame 0
+- The extras.c Fiber scheduler is a workaround that should be replaced by proper codegen
 
-**Reverted (not committed):**
-- 8KB address remapping in dispatch (caused flicker)
-- data_region-aware code generation (too aggressive, 1060 stubs)
-- data_region-aware BFS filtering (killed real functions, link errors)
-- Bank 4 extra_func entries (JMP targets land in data half)
+**Tooling now available:**
+- `tools/full_compare.py` — full state comparison (CPU, RAM, PPU, VRAM, CHR, palette, OAM, mapper)
+- Emulated mode (`--emulated`) now syncs ALL Nestopia state to runner globals
+- Ring buffer frame records now include MMC3 mapper state
+- JSON divergence catalog at `C:/temp/divergence_catalog.json`
 
 ### Build Commands
 
@@ -75,13 +67,16 @@ cmake --build nesrecomp/build/recompiler --config Release
 # Regenerate game code
 nesrecomp/build/recompiler/Release/NESRecomp.exe "Mega-Man 3 # NES.NES"
 
-# Build game
-cmake --build build --config Release
+# Build game (use VS cmake, not devkitPro cmake)
+CMAKE="/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+"$CMAKE" --build build --config Release
 ```
 
 ### TCP Ports
 - Native: **4372**
 - Emulated: **4373**
 
-### Dispatch Miss Log
-`build/Release/dispatch_misses.log` — unique (bank, addr) pairs that failed dispatch.
+### Comparison Command
+```bash
+python3 tools/full_compare.py --sample-count 20 --sample-interval 30 --output C:/temp/divergence_catalog.json
+```
