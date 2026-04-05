@@ -249,11 +249,15 @@ void game_run_nmi(void) {
 
     /* MM3's NMI handler at $C000 hijacks the RTI return address on the 6502
      * stack, replacing it with $C121 — a trampoline that calls func_FF90
-     * (bank-switch dispatch / sound engine).  In the recompiled code RTI is
-     * just a C return, so the trampoline never runs and func_FF90 never gets
-     * called from NMI.  Call it explicitly here. */
-    if (g_run_mode == RUN_MODE_NATIVE || g_run_mode == RUN_MODE_VERIFY)
-        func_FF90();
+     * (bank-switch dispatch / sound engine).
+     *
+     * DISABLED: The game's own code (scheduler coroutines) already calls
+     * func_FF90 during normal execution. Calling it again from NMI causes
+     * unbounded C stack growth: func_FF90 runs the sound engine which takes
+     * many cycles, triggering another VBlank mid-execution, which calls
+     * game_run_nmi → func_FF90 recursively. On real NES this can't happen
+     * because NMI is edge-triggered (once per frame). The sound engine
+     * doesn't work yet anyway (Issue 4 — jump_local_ptr unsupported). */
 }
 
 void game_run_main(void) {
@@ -301,7 +305,10 @@ void game_run_main(void) {
 
             nestopia_bridge_run_frame(g_controller1_buttons);
             nestopia_bridge_get_framebuf_argb(emu_argb);
-            runner_present_framebuf(emu_argb);
+            /* In turbo mode, only present every 16th frame to avoid
+             * vsync blocking (~6ms per SDL_RenderPresent call). */
+            if (!g_turbo || (g_frame_count & 15) == 0)
+                runner_present_framebuf(emu_argb);
 
             nestopia_bridge_get_ram(g_ram);
             nestopia_bridge_get_sram(g_sram);

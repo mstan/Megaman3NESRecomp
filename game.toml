@@ -241,35 +241,13 @@ bank = 4
 start = 0xA000
 end = 0xC000
 
+# 8KB bank 8 ($8000-$9FFF of 16KB bank 4) is entirely data tables.
+# Without this, the function finder auto-discovers garbage "functions"
+# that execute illegal opcodes and corrupt RAM (including $FD scroll state).
 [[data_region]]
 bank = 4
-start = 0x8105
-end = 0x815D
-
-[[data_region]]
-bank = 4
-start = 0x81B2
-end = 0x81CA
-
-[[data_region]]
-bank = 4
-start = 0x8271
-end = 0x82D1
-
-[[data_region]]
-bank = 4
-start = 0x83E6
-end = 0x84A6
-
-[[data_region]]
-bank = 4
-start = 0x8500
-end = 0x8518
-
-[[data_region]]
-bank = 4
-start = 0x858E
-end = 0xC006
+start = 0x8000
+end = 0xA000
 
 [[data_region]]
 bank = 5
@@ -673,14 +651,29 @@ fixed = [
     0xC143,
     0xC152,
     0xC17B,
+    0xC198,
     0xC1BE,
+    0xC1C1,
     0xC1F3,
+    0xC200,
+    0xC235,
+    0xC26F,
     0xC297,
+    0xC2D2,
+    0xC302,
+    0xC32B,
     0xC355,
     0xC372,
+    0xC375,
+    0xC3A3,
     0xC3C9,
+    0xC3CC,
+    0xC408,
     0xC417,
     0xC447,
+    0xC44A,
+    0xC469,
+    0xC49C,
     0xC4BA,
     0xC4BD,
     0xC4F8,
@@ -2013,56 +2006,11 @@ bank3 = [
     0xA99C,
 ]
 bank4 = [
-    0x8000,
-    0x8003,
-    0x801B,
-    0x802B,
-    0x8034,
-    0x8040,
-    0x8054,
-    0x8071,
-    0x8072,
-    0x8076,
-    0x8098,
-    0x80AF,
-    0x80ED,
-    0x80F8,
-    0x815D,
-    0x81AF,
-    0x81B1,
-    0x81CA,
-    0x822C,
-    0x8241,
-    0x8253,
-    0x8270,
-    0x82D1,
-    0x82E7,
-    0x82F6,
-    0x82F8,
-    0x82F9,
-    0x8309,
-    0x8331,
-    0x8332,
-    0x8345,
-    0x835A,
-    0x8367,
-    0x836F,
-    0x8382,
-    0x838F,
-    0x83E5,
-    0x84A0,
-    0x84BD,
-    0x84FC,
-    0x84FF,
-    0x8518,
-    0x852C,
-    0x8536,
-    0x853E,
-    0x853F,
-    0x8566,
-    0x857C,
-    0x858D,
-    0x8716,
+    # NOTE: $8000-$9FFF entries removed — 8KB bank 8 is data, not code.
+    # These were incorrectly imported; they produce illegal opcodes.
+    # The valid code at these addresses lives in 8KB bank 9 (second
+    # half of 16KB bank 4), which requires 8KB-granularity dispatch
+    # support in the recompiler to handle correctly.
     0xA000,
     0xA003,
     0xA006,

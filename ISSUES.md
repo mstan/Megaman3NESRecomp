@@ -186,10 +186,115 @@ approach 1 or 2 doesn't fully resolve them:
 
 ---
 
+## Issue 7: Native build extremely slow boot (BLOCKING)
+
+**Severity:** Fixed
+**When:** From cold boot through title screen and beyond
+**Symptom:** The native (recompiled) build took ~25 seconds for 4000 frames with TURBO ON (~161 fps). After fix, reaches gameplay in ~1.9 seconds (~1500+ fps).
+
+**Root cause:** `SDL_RENDERER_PRESENTVSYNC` on the main renderer made `SDL_RenderPresent` block for vsync (~6ms per call at 165Hz) on every frame, even in turbo mode. The manual `SDL_Delay(16)` skip in turbo was useless because vsync already blocked.
+
+**Fix:** In turbo mode, skip `SDL_UpdateTexture`/`SDL_RenderPresent` and only present every 16th frame. Applied to both native (`main_runner.c`) and emulated (`extras.c`) paths.
+
+**Note:** The per-instruction `maybe_trigger_vblank()` and `debug_server_check_s()` overhead was a red herring — both are cheap (1-2 branch early-outs). The bottleneck was purely the SDL present path.
+
+### Files to examine
+- `nesrecomp/runner/src/runtime.c` — `maybe_trigger_vblank()`, `debug_server_check_s()`
+- `nesrecomp/runner/src/debug_server.c` — per-instruction hooks, watchpoints, TCP polling
+- `extras.c:71` — `sched_fiber_proc()` tight loop
+- Generated code — every instruction emits `maybe_trigger_vblank(N);`
+
+---
+
+## Issue 8: Robot master cutscene background glitch
+
+**Severity:** Major (visual)
+**When:** Entering a robot master stage from stage select
+**Symptom:** The intro cutscene background glitches where the master sprite should appear. The master sprite never shows. Cutscene eventually proceeds to stage load.
+
+**Status:** Not yet investigated — blocked by Issue 7 (can't efficiently navigate native build to this point)
+
+### Planned investigation
+1. Navigate both native + emulated to cutscene via TCP (or fix Issue 7 first)
+2. Diff PPU state: CHR banks, nametable, OAM/sprites, palette
+3. Check if cutscene coroutine channel is running correctly (scheduler state)
+4. Trace any CHR bank or sprite write divergences
+
+### Relationship to Issue 6
+Issue 6 (scheduler broken) was previously marked as critical but the cutscene "eventually proceeds" — this may indicate the scheduler IS working (via Fibers) but some rendering state is wrong during the cutscene sequence.
+
+---
+
+## Issue 9: Stage background tile flicker
+
+**Severity:** Fixed
+**When:** After stage loads and gameplay begins
+**Symptom:** Correct stage tiles alternate with garbage tile data every few frames.
+
+**Status:** Fixed (Session 7, 2026-04-05).
+
+### Root cause (Session 6, 2026-04-04)
+
+**PPUCTRL nametable bits cycle through all 4 values** (0→1→2→3) every 8 frames. This causes the PPU renderer to select different nametable pages each frame = flicker.
+
+**Traced to RAM $FD:** The NMI handler reads $FD, masks to 2 bits, ORs with PPUCTRL shadow ($FF), writes to $2000. In the emulated build $FD = 0x00 (stable). In native build $FD cycles through garbage values, incrementing by 1 on every write (~600+ writes per 3 seconds).
+
+**Root cause: dispatch miss at $C297.** The scanline IRQ handler dispatches to scroll setup code at $C297 via JMP ($9C). This address was NOT in the dispatch table. The dispatch miss means the scroll setup never executes → scroll state ($FD, $7A) accumulates garbage from other code running in the IRQ context.
+
+**Contributing factor: nested VBlank re-entrancy.** The scanline IRQ handler runs inside ppu_render_frame. Its game code accumulates cycles → triggers nested VBlank → nested ppu_render_frame → nested IRQ handler. This was partially fixed by adding an early return in nes_vblank_callback at depth > 1.
+
+**Contributing factor: func_FF90 recursive stack growth.** game_run_nmi called func_FF90 (sound engine) every NMI. The game code also calls func_FF90 directly. Nested VBlanks during func_FF90 execution caused recursive calls → unbounded C stack growth → freeze. Fixed by removing explicit func_FF90 call from game_run_nmi (sound engine doesn't work anyway — Issue 4).
+
+### Fixes applied (Session 6)
+1. Added `0xC297` to fixed function list in game.toml
+2. Added `0xBB34` to bank14 function list in game.toml
+3. Removed func_FF90 call from game_run_nmi (fixes freeze)
+4. Added nested VBlank guard: nes_vblank_callback returns early at depth > 1 before ppu_render_frame
+
+### Final root cause (Session 7, 2026-04-05)
+
+**MMC3 8KB bank mismatch in dispatch table.** The recompiler uses 16KB banks, but MMC3 switches 8KB banks independently via R6/R7. When an odd 8KB bank (e.g., R6=9) is mapped to $8000-$9FFF, the dispatch table's `g_current_bank = r6/2 = 4` maps to functions generated from the WRONG 8KB half of the 16KB bank. Specifically, 16KB bank 4's first 8KB (8KB bank 8) is entirely data tables, not code. When dispatched, these "functions" contained only illegal opcodes that were treated as no-ops, with the few valid bytes between them executing random memory writes — including INC $FD.
+
+### Fixes applied (Session 7)
+1. **Runner: IRQ I-flag check** — `ppu_renderer.c`: added `&& !g_cpu.I` check and `g_cpu.I = 1` set before calling func_IRQ() in the scanline IRQ handler. Matches real 6502 IRQ masking.
+2. **Runner: MMC3 8KB alignment tracking** — `mapper.c`: added `g_mmc3_r6_odd` and `g_mmc3_r7_even` flags set in mmc3_apply_prg(). (Not yet used for dispatch remapping — needed for future proper 8KB bank support.)
+3. **Codegen: illegal opcode dispatch filter** — `code_generator.c`: emit_dispatch() now validates the first 8 instructions of each bank variant. If >50% are illegal opcodes, the variant is excluded from the dispatch table. This prevents data-as-code functions from being called, causing them to fall through to dispatch_miss instead.
+4. **game.toml: 15 missing IRQ handler addresses** — Added all addresses from the scanline IRQ dispatch vector tables at $C4C8/$C4DA ($C198, $C1C1, $C200, $C235, $C26F, $C2D2, $C302, $C32B, $C375, $C3A3, $C3CC, $C408, $C44A, $C469, $C49C).
+5. **game.toml: bank 4 data region** — Marked $8000-$A000 in bank 4 as data (8KB bank 8 is entirely data tables).
+
+### Underlying architectural issue
+The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. When R6 is odd, $8000-$9FFF contains code from the SECOND 8KB of the 16KB bank, but the dispatch table selects functions generated from the FIRST 8KB. The illegal opcode filter (fix 3) is a mitigation — the proper fix requires 8KB-granularity dispatch support in the recompiler.
+
+### Key addresses
+| Address | Purpose |
+|---------|---------|
+| $C143   | IRQ handler entry (JMP ($9C) trampoline) |
+| $9C/$9D | IRQ dispatch vector (set by NMI handler from table at $C4C8/$C4DA) |
+| $C297   | Scroll setup function (reads $2002, sets $2000/$2005 for game area) |
+| $C4BA   | No-op IRQ return stub (STA $E000, PLA×3, PLP, RTI) |
+| $FD     | Scroll nametable source (low 2 bits → PPUCTRL bits 0-1) |
+| $7A     | Copy of $FD used by NMI handler |
+| $FF     | PPUCTRL shadow (base value, nametable bits OR'd from $7A) |
+
+---
+
+## Tools created this session (Session 5)
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/diff_ppu_state.py` | Full PPU diff: CHR, nametable, palette, PPU regs, mapper, key RAM between ports 4372/4373 |
+| `scripts/check_state.py` | Query game state on both ports, pause both, screenshot |
+| `scripts/tcp_navigate.py` | Navigate game step-by-step via TCP with state logging at each transition |
+| `scripts/bug_repro_stage.txt` | Input script to navigate to stage (timing-based, needs improvement with WAIT_RAM8) |
+
+---
+
 ## General Notes
-- Title screen, stage select, and gameplay are fully working (minus intro cutscene)
-- All 8 special weapons fire correctly via RAM injection
-- Enemies spawn and interact with the player
-- Zero critical dispatch misses during gameplay (only sound engine bank 13 misses remain)
+- Title screen, stage select, and gameplay are working
+- Turbo mode runs at ~1500+ fps (Issue 7 fixed)
+- Game no longer freezes from recursive func_FF90 (Session 6 fix)
+- Stage background flicker persists (Issue 9 — awaiting disasm import)
+- Dispatch misses: $C297 (fixed bank, added), $BB34 (bank 14, added), plus likely more
 - TCP debug server on port 4372 (native) / 4373 (emulated)
+- Emulated oracle PPU reads return zeros (known Nestopia internal state gap)
 - Test scripts in `scripts/` directory for automated regression testing
