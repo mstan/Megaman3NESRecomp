@@ -174,7 +174,7 @@ The old 200-line Fiber hack was deleted from extras.c.
 **When:** After stage loads and gameplay begins
 **Symptom:** Correct stage tiles alternate with garbage tile data every few frames.
 
-**Status:** Fixed (Session 7, 2026-04-05).
+**Status:** Fixed (Session 17, 2026-04-06). Sessions 6-7 mitigated but did not fully fix.
 
 ### Root cause (Session 6, 2026-04-04)
 
@@ -205,8 +205,24 @@ The old 200-line Fiber hack was deleted from extras.c.
 4. **game.toml: 15 missing IRQ handler addresses** — Added all addresses from the scanline IRQ dispatch vector tables at $C4C8/$C4DA ($C198, $C1C1, $C200, $C235, $C26F, $C2D2, $C302, $C32B, $C375, $C3A3, $C3CC, $C408, $C44A, $C469, $C49C).
 5. **game.toml: bank 4 data region** — Marked $8000-$A000 in bank 4 as data (8KB bank 8 is entirely data tables).
 
-### Underlying architectural issue
-The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. When R6 is odd, $8000-$9FFF contains code from the SECOND 8KB of the 16KB bank, but the dispatch table selects functions generated from the FIRST 8KB. The illegal opcode filter (fix 3) is a mitigation — the proper fix requires 8KB-granularity dispatch support in the recompiler.
+### Underlying architectural issue (diagnosed Session 17)
+The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. When R6 is odd, $8000-$9FFF contains code from the SECOND 8KB of the 16KB bank, but the dispatch table selects functions generated from the FIRST 8KB. The illegal opcode filter (fix 3) was a mitigation only — the real problem was that **direct C function calls within a 16KB bank bypassed the dispatch table's 8KB address remapping entirely**.
+
+### True root cause (Session 17, 2026-04-06)
+
+**Cross-8KB direct calls bypassing dispatch.** The recompiler emitted direct C calls (e.g., `func_8332_b4()`) for JMP/JSR within the same 16KB bank. On MMC3, the two 8KB halves ($8000-$9FFF and $A000-$BFFF) are switched independently. When `func_A003_b4` (valid code in bank 4's upper 8KB = 8KB bank 9) did `JMP $8332`, the recompiler emitted `func_8332_b4()` — a direct call to bank 4's LOWER 8KB ($8000-$9FFF = 8KB bank 8), which is entirely data tables. The data bytes decoded as INC instructions that corrupted `$FD` (scroll nametable source), causing PPUCTRL nametable bits to cycle 0→1→2→3 every frame.
+
+The `call_by_address()` dispatch already had 8KB address remapping ($8332→$A332 when R6 is odd), but it was never reached because the direct call bypassed dispatch.
+
+**Measured divergence:**
+- Native: `$FD` incrementing by 5 every other frame, `$7A` lagging by 1 frame, PPUCTRL cycling `0x88→0x89→0x8A→0x8B`
+- Emulated oracle: `$FD=0x00`, `$7A=0x00`, PPUCTRL=`0x88` — stable
+- Writer: `func_8332_b4` (data-as-code) via call chain `func_A003_b4 < func_800C_b14 < func_E33C < func_E16A < func_FF21 < func_C143`
+
+### Fixes applied (Session 17)
+1. **Codegen: MMC3 cross-8KB dispatch** — `code_generator.c`: JMP/JSR that cross the 8KB boundary ($8000-$9FFF ↔ $A000-$BFFF) within a 16KB bank now emit `call_by_address()` instead of direct function calls. This ensures the runtime's 8KB address remapping is applied.
+2. **Function finder: cross-8KB mirroring** — `function_finder.c`: When discovering JSR/JMP targets that cross the 8KB boundary on MMC3, also add the remapped address (target ± $2000) as a function entry in the same bank. 139 additional functions discovered.
+3. Sessions 6-7 fixes (IRQ I-flag, illegal opcode filter, data_region, IRQ addresses) remain in place as defense-in-depth.
 
 ### Key addresses
 | Address | Purpose |
@@ -230,7 +246,7 @@ The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. 
 **Symptom:** Robot master names are correct but portrait CHR tiles are wrong/swapped. Portraits don't match their labels.
 **Screenshot:** `C:\Users\Matthew\Documents\ShareX\Screenshots\2026-04\MegaMan3Recomp_JiOk9wpcik.png`
 
-**Status:** Open — CHR bank timing issue (Session 15 narrowed root cause)
+**Status:** Fixed (Session 17). Root cause was the same MMC3 8KB dispatch issue as Issue 9.
 
 ### Session 15: Mirroring diagnosis was WRONG
 
@@ -297,6 +313,16 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 
 ---
 
+## Issue 13: Dispatch miss $D3FD bank 13
+
+**Severity:** Minor (gameplay unaffected so far)
+**When:** During gameplay, frame ~2158
+**Symptom:** `[Dispatch] MISS: no func for $D3FD bank=13`
+
+**Status:** Open — undiscovered function. Likely needs `extra_func 13 0xD3FD` in game.toml, or better multi-pass discovery in `function_finder.c`.
+
+---
+
 ## Tools
 
 | Script | Purpose |
@@ -311,12 +337,14 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 ---
 
 ## General Notes
-- Title screen and stage select working (portraits garbled — Issue 10, CHR timing)
+- Title screen, stage select, and stage gameplay all working
+- Stage select portraits correct (Issue 10 fixed, Session 17)
+- Stage background flicker fixed (Issue 9, Session 17 — MMC3 8KB cross-boundary dispatch)
 - Stage entry no longer crashes (Issue 12 fixed temporarily)
 - Coroutine scheduler working via codegen-driven Fibers (Issue 6 fixed, Session 9)
 - Turbo mode runs at ~1500+ fps (Issue 7 fixed)
 - No audio (Issue 4 — sound engine `jump_local_ptr` pattern unsupported)
-- Stage background flicker fixed (Issue 9, Session 7)
-- MMC3 8KB dispatch remapping working (Session 9)
+- MMC3 8KB dispatch: cross-boundary calls + mirrored function discovery (Session 17)
 - TCP debug server on port 4372 (native) / 4373 (emulated)
 - Emulated oracle mapper_state fixed (Issue 11, mirroring fixed in Session 15)
+- Minor dispatch miss: $D3FD bank 13 (Issue 13, not yet impacting gameplay)
