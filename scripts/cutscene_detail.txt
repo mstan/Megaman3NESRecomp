@@ -1,0 +1,47 @@
+TURBO ON
+WAIT 1000
+HOLD START
+WAIT 5
+RELEASE START
+WAIT 200
+HOLD UP
+WAIT 5
+RELEASE UP
+WAIT 15
+HOLD A
+WAIT 5
+RELEASE A
+
+# Dense cutscene screenshots every 15 frames
+WAIT 15
+SCREENSHOT C:/temp/cut_d015.png
+WAIT 15
+SCREENSHOT C:/temp/cut_d030.png
+WAIT 15
+SCREENSHOT C:/temp/cut_d045.png
+WAIT 15
+SCREENSHOT C:/temp/cut_d060.png
+WAIT 15
+SCREENSHOT C:/temp/cut_d075.png
+WAIT 15
+SCREENSHOT C:/temp/cut_d090.png
+WAIT 30
+SCREENSHOT C:/temp/cut_d120.png
+WAIT 30
+SCREENSHOT C:/temp/cut_d150.png
+WAIT 30
+SCREENSHOT C:/temp/cut_d180.png
+WAIT 60
+SCREENSHOT C:/temp/cut_d240.png
+WAIT 60
+SCREENSHOT C:/temp/cut_d300.png
+WAIT 60
+SCREENSHOT C:/temp/cut_d360.png
+WAIT 60
+SCREENSHOT C:/temp/cut_d420.png
+WAIT 120
+SCREENSHOT C:/temp/cut_d540.png
+WAIT 120
+SCREENSHOT C:/temp/cut_d660.png
+
+EXIT 0

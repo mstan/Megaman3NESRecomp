@@ -1,0 +1,80 @@
+# Navigate to stage entry - reproduces Bug 1 (cutscene) and Bug 2 (flicker)
+# Works for both native and emulated builds
+TURBO ON
+LOG Booting, waiting for title...
+
+# Wait for title screen (game_mode $31 goes to 0x01 for title)
+WAIT 400
+
+SCREENSHOT bug_repro_01_title.png
+LOG Title screen reached
+
+# Select GAME START: press UP to be safe, then START
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 5
+
+HOLD START
+WAIT 3
+RELEASE START
+LOG Start pressed
+
+# Wait for stage select (game_mode $31 = 0x03 is typical for stage select)
+WAIT 200
+
+SCREENSHOT bug_repro_02_stage_select.png
+LOG Stage select visible
+
+# Navigate to a boss - move UP from default position
+HOLD UP
+WAIT 3
+RELEASE UP
+WAIT 15
+
+SCREENSHOT bug_repro_03_boss_picked.png
+LOG Boss highlighted
+
+# Enter stage
+HOLD START
+WAIT 3
+RELEASE START
+LOG Stage entry pressed
+
+# Cutscene phase (Bug 1 area) - screenshot at intervals
+WAIT 60
+SCREENSHOT bug_repro_04_cutscene_60.png
+LOG Cutscene +60f
+
+WAIT 60
+SCREENSHOT bug_repro_05_cutscene_120.png
+LOG Cutscene +120f
+
+WAIT 120
+SCREENSHOT bug_repro_06_cutscene_240.png
+LOG Cutscene +240f
+
+WAIT 120
+SCREENSHOT bug_repro_07_cutscene_360.png
+LOG Cutscene +360f
+
+# Stage load phase (Bug 2 area) - screenshot rapidly to catch flicker
+WAIT 120
+SCREENSHOT bug_repro_08_stage_480.png
+LOG Stage +480f
+
+WAIT 60
+SCREENSHOT bug_repro_09_stage_540.png
+
+WAIT 60
+SCREENSHOT bug_repro_10_stage_600.png
+
+WAIT 60
+SCREENSHOT bug_repro_11_stage_660.png
+
+WAIT 60
+SCREENSHOT bug_repro_12_stage_720.png
+
+# Let it run for a while to observe steady state
+WAIT 36000
+EXIT 0

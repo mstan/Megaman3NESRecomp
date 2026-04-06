@@ -1,0 +1,44 @@
+TURBO ON
+LOG Booting
+WAIT 1000
+
+# Title screen - press START
+HOLD START
+WAIT 5
+RELEASE START
+WAIT 200
+
+# Stage select - move UP to select a boss (cursor starts on Mega Man center)
+HOLD UP
+WAIT 5
+RELEASE UP
+WAIT 15
+
+SCREENSHOT C:/temp/qs_stagesel.png
+LOG Stage select - boss highlighted
+
+# Enter stage with A
+HOLD A
+WAIT 5
+RELEASE A
+LOG Entering stage
+
+# Cutscene screenshots (Issue 8)
+WAIT 60
+SCREENSHOT C:/temp/qs_cut_060.png
+WAIT 60
+SCREENSHOT C:/temp/qs_cut_120.png
+WAIT 120
+SCREENSHOT C:/temp/qs_cut_240.png
+WAIT 240
+SCREENSHOT C:/temp/qs_cut_480.png
+
+# Gameplay screenshots (Issue 9)
+WAIT 240
+SCREENSHOT C:/temp/qs_play_720.png
+WAIT 240
+SCREENSHOT C:/temp/qs_play_960.png
+WAIT 240
+SCREENSHOT C:/temp/qs_play_1200.png
+
+EXIT 0

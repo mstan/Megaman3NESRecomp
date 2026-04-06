@@ -1,0 +1,14 @@
+TURBO ON
+WAIT 500
+SCREENSHOT C:/temp/boot_f500.png
+LOG boot_timing: frame 500
+WAIT 500
+SCREENSHOT C:/temp/boot_f1000.png
+LOG boot_timing: frame 1000
+WAIT 1000
+SCREENSHOT C:/temp/boot_f2000.png
+LOG boot_timing: frame 2000
+WAIT 2000
+SCREENSHOT C:/temp/boot_f4000.png
+LOG boot_timing: frame 4000
+EXIT 0

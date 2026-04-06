@@ -31,6 +31,123 @@ int         g_watchdog_triggered  = 0;
 uint32_t    g_watchdog_frame      = 0;
 const char *g_watchdog_stack_dump = "";
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+/* ==================================================================
+ * Coroutine scheduler — Windows Fiber implementation
+ *
+ * Each coroutine channel gets its own fiber with its own C stack.
+ * The scheduler runs in a dedicated fiber. Yield (func_FF21) switches
+ * to the scheduler fiber; resume switches back to the coroutine fiber.
+ * This preserves the full C call chain across yield/resume cycles.
+ *
+ * NOTE: The codegen coroutine pattern detection (coroutine_start/resume/yield)
+ * has a known push_all_jsr corruption bug — the scheduler's JSR to func_C545
+ * overwrites saved X/Y on the 6502 stack before PLA reads them. This
+ * replace_func approach avoids the issue by implementing the scheduler
+ * entirely in C without 6502 stack interaction.
+ * ================================================================== */
+
+#define SCHED_MAX_CHANNELS 4
+#define FIBER_STACK_SIZE   (1024 * 1024)
+
+static LPVOID s_scheduler_fiber = NULL;
+static LPVOID s_co_fibers[SCHED_MAX_CHANNELS] = {0};
+static int    s_fiber_init = 0;
+static int    s_current_ch = -1;
+static uint16_t s_start_addr = 0;
+
+static void CALLBACK co_fiber_proc(LPVOID param) {
+    int ch = (int)(intptr_t)param;
+    call_by_address(s_start_addr);
+    s_co_fibers[ch] = NULL;
+    SwitchToFiber(s_scheduler_fiber);
+}
+
+static void CALLBACK sched_fiber_proc(LPVOID param) {
+    (void)param;
+    while (1) {
+        g_cpu.S = 0xFF;
+        g_cpu.X = 0x00;
+        g_ram[0x90] = 0x00;
+        g_cpu.Y = 0x04;
+
+        int dispatched = 0;
+        while (g_cpu.Y > 0) {
+            maybe_trigger_vblank(1);
+            uint8_t state = g_ram[0x80 + g_cpu.X];
+            if (state >= 0x04) {
+                if (g_ram[0x90] != 0) { dispatched = -1; break; }
+                g_cpu.Y = (g_cpu.Y - 1) & 0xFF;
+                g_ram[0x91] = g_cpu.Y ^ 0x03;
+                uint8_t old_state = g_ram[0x80 + g_cpu.X];
+                g_ram[0x80 + g_cpu.X] = 0x02;
+                int ch = g_cpu.X >> 2;
+                s_current_ch = ch;
+                if (g_ram[0x91] == 0) func_C545();
+
+                if (old_state == 0x08) {
+                    uint8_t lo = g_ram[0x82 + g_cpu.X];
+                    uint8_t hi = g_ram[0x83 + g_cpu.X];
+                    g_ram[0x93] = lo; g_ram[0x94] = hi;
+                    s_start_addr = (uint16_t)lo | ((uint16_t)hi << 8);
+                    if (s_co_fibers[ch]) { DeleteFiber(s_co_fibers[ch]); s_co_fibers[ch] = NULL; }
+                    s_co_fibers[ch] = CreateFiber(FIBER_STACK_SIZE, co_fiber_proc, (LPVOID)(intptr_t)ch);
+                    SwitchToFiber(s_co_fibers[ch]);
+                } else {
+                    g_cpu.S = g_ram[0x82 + g_cpu.X];
+                    if (s_co_fibers[ch]) SwitchToFiber(s_co_fibers[ch]);
+                }
+                s_current_ch = -1;
+                dispatched = 1;
+                break;
+            }
+            g_cpu.X = (g_cpu.X + 4) & 0xFF;
+            g_cpu.Y = (g_cpu.Y - 1) & 0xFF;
+        }
+        if (!dispatched) maybe_trigger_vblank(1);
+    }
+}
+
+void func_FEAA(void) {
+    if (s_scheduler_fiber) { SwitchToFiber(s_scheduler_fiber); }
+}
+
+void func_FF21(void) {
+    g_cpu.A = 0x01;
+    g_ram[0x93] = g_cpu.A;
+    g_ram[0x100 + g_cpu.S] = g_cpu.X; g_cpu.S--;
+    g_ram[0x100 + g_cpu.S] = g_cpu.Y; g_cpu.S--;
+    g_ram[0x100 + g_cpu.S] = 0xFF; g_cpu.S--;
+    g_ram[0x100 + g_cpu.S] = 0x2B; g_cpu.S--;
+    func_FF14();
+    g_cpu.S += 2;
+    g_cpu.A = g_ram[0x93];
+    g_ram[0x81 + g_cpu.X] = g_cpu.A;
+    g_cpu.A = 0x01;
+    g_ram[0x80 + g_cpu.X] = g_cpu.A;
+    g_cpu.Y = g_cpu.X;
+    g_cpu.X = g_cpu.S;
+    g_ram[(0x82 + g_cpu.Y) & 0xFF] = g_cpu.X;
+    int ch = g_cpu.Y >> 2;
+    if (!s_fiber_init) {
+        s_fiber_init = 1;
+        LPVOID main_fiber = ConvertThreadToFiber(NULL);
+        if (ch >= 0 && ch < SCHED_MAX_CHANNELS) s_co_fibers[ch] = main_fiber;
+        s_scheduler_fiber = CreateFiber(FIBER_STACK_SIZE, sched_fiber_proc, NULL);
+        SwitchToFiber(s_scheduler_fiber);
+    } else {
+        SwitchToFiber(s_scheduler_fiber);
+    }
+    g_cpu.S++;
+    g_cpu.Y = g_ram[0x100 + g_cpu.S];
+    g_cpu.S++;
+    g_cpu.X = g_ram[0x100 + g_cpu.S];
+    g_cpu.S += 2;
+}
+
 /* ==================================================================
  * Runner hook implementations
  * ================================================================== */

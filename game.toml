@@ -8,6 +8,18 @@ push_all_jsr = true
 [[inline_dispatch]]
 addr = 0x8023
 
+# Coroutine scheduler and yield — replaced by C implementation in extras.c.
+# The codegen coroutine pattern detection has a push_all_jsr corruption bug
+# (see CONTINUE.md). Using replace_func until the codegen emits a full C
+# scheduler loop instead of patching coroutine_* into the 6502 flow.
+[[replace_func]]
+bank = -1
+addr = 0xFEAA
+
+[[replace_func]]
+bank = -1
+addr = 0xFF21
+
 [[data_region]]
 bank = 11
 start = 0x8023
