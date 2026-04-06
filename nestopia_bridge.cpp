@@ -11,6 +11,9 @@
 #include "source/core/api/NstApiEmulator.hpp"
 #include "source/core/NstMachine.hpp"
 #include "source/core/NstPpu.hpp"
+#include "source/core/NstCartridge.hpp"
+#include "source/core/board/NstBoard.hpp"
+#include "source/core/board/NstBoardMmc3.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -267,6 +270,49 @@ void nestopia_bridge_get_cpu_regs(NestopiaCpuRegs *out) {
     out->sp = (uint8_t)mach.cpu.GetSP();
     out->p  = (uint8_t)mach.cpu.GetFlags();
     out->pc = (uint16_t)mach.cpu.GetPC();
+}
+
+void nestopia_bridge_get_mapper_state(NestopiaMapperState *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!s_loaded) return;
+
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+
+    /* mach.image is Image*; check it's a cartridge */
+    if (!mach.image || mach.image->GetType() != Nes::Core::Image::CARTRIDGE) return;
+
+    Nes::Core::Cartridge *cart = static_cast<Nes::Core::Cartridge *>(mach.image);
+    if (!cart->GetBoard()) return;
+
+    /* Try to cast to Mmc3 — if the board isn't MMC3, dynamic_cast returns null */
+    Nes::Core::Boards::Mmc3 *mmc3 = dynamic_cast<Nes::Core::Boards::Mmc3 *>(cart->GetBoard());
+    if (!mmc3) return;
+
+    out->valid = 1;
+    out->bank_select = (uint8_t)(mmc3->regs.ctrl0 & 0xFF);
+    out->ctrl1 = (uint8_t)(mmc3->regs.ctrl1 & 0xFF);
+
+    /* Map Nestopia's internal banks to R0-R7 register values:
+     * Nestopia stores CHR as 8x 1KB banks (R0/R1 each split into 2),
+     * native stores raw register values. Convert back. */
+    out->regs[0] = mmc3->banks.chr[0];    /* R0: 2KB CHR (stored as & 0xFE) */
+    out->regs[1] = mmc3->banks.chr[2];    /* R1: 2KB CHR (stored as & 0xFE) */
+    out->regs[2] = mmc3->banks.chr[4];    /* R2: 1KB CHR */
+    out->regs[3] = mmc3->banks.chr[5];    /* R3: 1KB CHR */
+    out->regs[4] = mmc3->banks.chr[6];    /* R4: 1KB CHR */
+    out->regs[5] = mmc3->banks.chr[7];    /* R5: 1KB CHR */
+    out->regs[6] = mmc3->banks.prg[0];    /* R6: PRG 8KB */
+    out->regs[7] = mmc3->banks.prg[1];    /* R7: PRG 8KB */
+    for (int i = 0; i < 4; i++)
+        out->prg[i] = mmc3->banks.prg[i];
+
+    /* IRQ state — accessed via irq.unit (the BaseIrq) */
+    out->irq_counter = (uint8_t)mmc3->irq.unit.GetCount();
+    out->irq_latch   = (uint8_t)mmc3->irq.unit.GetLatch();
+    out->irq_reload   = mmc3->irq.unit.GetReload() ? 1 : 0;
+    out->irq_enabled  = mmc3->irq.unit.GetEnabled() ? 1 : 0;
 }
 
 } /* extern "C" */

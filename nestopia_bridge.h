@@ -43,6 +43,22 @@ typedef struct {
 
 void nestopia_bridge_get_cpu_regs(NestopiaCpuRegs *out);
 
+/* MMC3 mapper state extraction — reads Nestopia's internal mapper registers */
+typedef struct {
+    uint8_t bank_select;    /* $8000 ctrl0: low 3 bits = reg select, bit 6 = PRG mode, bit 7 = CHR A12 inversion */
+    uint8_t ctrl1;          /* $A001 */
+    uint8_t regs[8];        /* R0-R7: CHR (0-5) and PRG (6-7) bank values */
+    uint8_t prg[4];         /* PRG bank mapping */
+    uint8_t irq_latch;
+    uint8_t irq_counter;
+    int     irq_reload;
+    int     irq_enabled;
+    int     mirroring;      /* from regs.ctrl0 bit 0 via $A000 */
+    int     valid;          /* 1 if board is MMC3, 0 otherwise */
+} NestopiaMapperState;
+
+void nestopia_bridge_get_mapper_state(NestopiaMapperState *out);
+
 #ifdef __cplusplus
 }
 #endif

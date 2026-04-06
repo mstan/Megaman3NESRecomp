@@ -35,7 +35,7 @@ import sys
 import json
 
 HOST = "127.0.0.1"
-PORT = 4370
+PORT = 4372
 
 def send_cmd(cmd_name, **kwargs):
     """Send a JSON command and return the parsed response."""

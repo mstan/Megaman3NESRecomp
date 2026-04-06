@@ -9,6 +9,7 @@
 #include "debug_server.h"
 #include "verify_mode.h"
 #include "recomp_stack.h"
+#include "mapper.h"
 
 #ifdef ENABLE_NESTOPIA_ORACLE
 #include "nestopia_bridge.h"
@@ -209,6 +210,14 @@ void game_fill_frame_record(void *record) {
     d[10] = g_ppu_oam[1]; d[11] = g_ppu_oam[2];
     d[12] = g_ram[0xFF];  d[13] = g_ram[0xFE];
     d[14] = g_ram[0xAE];  d[15] = g_ram[0xF6];
+    /* Extended: mapper state for divergence tracking */
+    MapperState ms;
+    mapper_get_state(&ms);
+    d[16] = (uint8_t)ms.mirroring;
+    d[17] = ms.mmc3_bank_select;
+    d[18] = ms.mmc3_regs[0]; d[19] = ms.mmc3_regs[1];
+    d[20] = ms.mmc3_regs[2]; d[21] = ms.mmc3_regs[3];
+    d[22] = ms.mmc3_regs[4]; d[23] = ms.mmc3_regs[5];
 }
 
 /* ==================================================================
@@ -216,6 +225,36 @@ void game_fill_frame_record(void *record) {
  * ================================================================== */
 int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
     (void)json;
+
+    /* In emulated mode, intercept mapper_state to read from Nestopia internals */
+#ifdef ENABLE_NESTOPIA_ORACLE
+    if (strcmp(cmd, "mapper_state") == 0 && g_run_mode == RUN_MODE_EMULATED) {
+        NestopiaMapperState ns;
+        nestopia_bridge_get_mapper_state(&ns);
+        if (ns.valid) {
+            debug_server_send_fmt(
+                "{\"id\":%d,\"ok\":true,\"bank\":%d,"
+                "\"type\":4,\"mirror\":%d,"
+                "\"mmc3_bank_sel\":%d,"
+                "\"mmc3_regs\":[%d,%d,%d,%d,%d,%d,%d,%d],"
+                "\"mmc3_prg\":[%d,%d,%d,%d],"
+                "\"mmc3_irq_latch\":%d,\"mmc3_irq_counter\":%d,"
+                "\"mmc3_irq_reload\":%d,\"mmc3_irq_enabled\":%d}\n",
+                id, (int)ns.prg[2],  /* current switchable PRG bank */
+                (ns.bank_select & 0x01) ? 3 : 2,  /* mirroring from ctrl0 bit 0 — but actually $A000 controls this */
+                (int)ns.bank_select,
+                ns.regs[0], ns.regs[1], ns.regs[2], ns.regs[3],
+                ns.regs[4], ns.regs[5], ns.regs[6], ns.regs[7],
+                ns.prg[0], ns.prg[1], ns.prg[2], ns.prg[3],
+                (int)ns.irq_latch, (int)ns.irq_counter,
+                ns.irq_reload, ns.irq_enabled);
+        } else {
+            debug_server_send_fmt(
+                "{\"id\":%d,\"ok\":false,\"error\":\"board is not MMC3\"}\n", id);
+        }
+        return 1;
+    }
+#endif
 
     if (strcmp(cmd, "mm3_state") == 0) {
         debug_server_send_fmt(

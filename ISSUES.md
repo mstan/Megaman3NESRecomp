@@ -18,12 +18,12 @@
 **Severity:** Fixed
 **When:** Select a boss from the stage select screen
 **Symptom:** Stage graphics loaded correctly (background, terrain, enemies) but Mega Man spawned at Y=0 (top of screen) and was unresponsive to input.
-**Root cause:** Two missing function entry points in `game.cfg`:
+**Root cause:** Two missing function entry points in `game.toml`:
 - `extra_func -1 D5BA` — a fixed-bank sprite processing routine called during the gameplay loop
 - `extra_func 4 8716` — bank 4 enemy/sprite AI code
 
 Without these, `call_by_address` logged dispatch misses and returned without executing, causing the player physics and sprite processing to never run. Mega Man was active (`$0300=$80`) but his position was never updated.
-**Fix:** Added the two `extra_func` entries to `game.cfg` and regenerated.
+**Fix:** Added the two `extra_func` entries to `game.toml` and regenerated.
 **Note:** The NMI trampoline at `$C121` (which calls `$FF90` for the sound engine tick) is still dead code in the recomp. This means no audio, but gameplay is unaffected. Fixing the sound engine requires handling the `jump_local_ptr` pattern at `$8023` (PLA-return-address-as-data) in the recompiler.
 
 ## Issue 4: No audio (sound engine not ticking)
@@ -34,7 +34,7 @@ Without these, `call_by_address` logged dispatch misses and returned without exe
 
 Calling `func_FF90()` directly causes dispatch misses because the sound engine uses `jump_local_ptr` at `$8023` — a 6502 pattern where PLA grabs the JSR return address to read inline data tables. In the recomp, PLA gets garbage because JSR uses C function calls, not the 6502 stack.
 **Diagnosis steps:**
-1. Add `inline_dispatch` entries to `game.cfg` for the sound engine's `jump_local_ptr` call sites in bank 11
+1. Add `inline_dispatch` entries to `game.toml` for the sound engine's `jump_local_ptr` call sites in bank 11
 2. Or implement the `jump_local_ptr` pattern in the recompiler's code generator (PATTERNS.md)
 3. Then call `func_FF90()` in `game_run_nmi()` after `verify_mode_run_nmi()`
 
@@ -112,77 +112,22 @@ The sound engine at `$FF90`:
 The sound engine uses `jump_local_ptr` at `$8023` which reads inline data from after the JSR call site. This pattern is incompatible with the recomp's C function call semantics and needs recompiler-level support.
 
 ## Issue 6: Robot master intro cinematic skipped (coroutine scheduler broken)
-**Severity:** Critical
+**Severity:** Fixed (Session 9)
 **When:** Entering a stage from stage select
 **Symptom:** Stage loads directly — boss name card, portrait, and teleport-down
-animation are all missing. The stage geometry appears immediately.
+animation are all missing.
 
 **Root cause:** The coroutine scheduler at `$FEAA` uses TXS/TSX + PLA/RTS to
 save and resume cooperative coroutines via the 6502 hardware stack. In the recomp,
-JSR becomes a C function call (no return address pushed to the 6502 stack), and
-RTS becomes `return;` (no stack pop/dispatch). This means:
+JSR/RTS use C function calls, so the 6502 stack-based resume mechanism doesn't work.
 
-1. The scheduler's resume-RTS finds no valid return address on the 6502 stack
-2. Even with `push_all_jsr` (which fixes the stack data), the resume via
-   `call_by_address` starts a fresh C call — the nested call chain above the
-   resume point is lost
-3. Each resume/yield cycle pops 6 bytes (PLA+PLA+RTS) without replenishing them,
-   so the saved stack pointer drifts upward into uninitialized memory
-
-**What works so far:**
-- `push_all_jsr` in game.cfg: all JSRs push return addresses to the 6502 stack ✓
-- `replace_func -1 FEAA` in extras.c: scheduler reads channel table, does
-  PLA/PLA, dispatches resume address via call_by_address ✓
-- 6502 stack contains valid return addresses ✓
-
-**What's broken:** After `call_by_address(resume_addr)`, the coroutine runs in a
-fresh C call frame. When it hits RTS, it returns to the scheduler (or nowhere),
-not to the function that originally called it. The full nested call chain that was
-on the 6502 stack is not represented in the C call stack.
-
-**Example:** A coroutine does `JSR game_logic` → `JSR sub_func` → `JSR FF21`
-(yield). The 6502 stack holds return addresses for all three JSRs. On resume, the
-real CPU continues inside `sub_func`, which returns to `game_logic`, which
-eventually yields again. In the recomp, `call_by_address(sub_func_resume)` enters
-`sub_func` from the resume point, but its RTS has nowhere to return to — the
-`game_logic` frame doesn't exist on the C call stack.
-
-### Solution approaches (in priority order)
-
-**Approach 1: setjmp/longjmp**
-Save the C execution context when a coroutine yields (`setjmp`), restore it on
-resume (`longjmp`). This preserves the full C call stack.
-- `func_FF21` (yield): `setjmp(coroutine_ctx[ch])`, then return up the C stack
-- Scheduler resume: `longjmp(coroutine_ctx[ch], 1)` instead of `call_by_address`
-- Pros: standard C, portable, minimal code change
-- Cons: all functions between yield and scheduler must be on the C stack at
-  setjmp time; if the scheduler is called from a different stack depth the
-  jmp_buf is invalid
-
-**Approach 2: OS fibers (Windows Fibers / POSIX ucontext)**
-Each coroutine channel gets its own OS-level execution context with a separate C
-stack. The scheduler switches between fibers.
-- `func_FF21` (yield): `SwitchToFiber(scheduler_fiber)`
-- Scheduler resume: `SwitchToFiber(channel_fiber[ch])`
-- Pros: true coroutine semantics, each channel has its own C stack, no jmp_buf
-  lifetime issues
-- Cons: platform-specific, needs per-fiber stack allocation
-
-**Approach 3: State-machine restructuring**
-Analyze each coroutine function and rewrite it as a state machine where each
-resume point is a proper function entry. The scheduler sets a state variable and
-calls the entry point.
-- Pros: no OS dependencies, works with plain C calls
-- Cons: extremely invasive, per-game analysis, not game-agnostic, fragile
-
-### Observed dispatch misses during scheduler resume
-These are mid-function return addresses that need `extra_label` entries if
-approach 1 or 2 doesn't fully resolve them:
-- `$C0BB` (inside NMI handler, after `JSR $FF41`)
-- `$FF2B` (inside `func_FF21`, after `JSR $FF14`)
-- `$FFC2` (inside `func_FF6B`, after `JSR $8000`)
-- `$F690` (fixed bank)
-- `$B001` (switchable bank 12)
+**Fix (Session 9):** Generic coroutine pattern detection added to `code_generator.c`:
+- `LDX #$FF; TXS` → `coroutine_scheduler_setjmp()` (scheduler loop entry)
+- `TSX; STX zp,Y; JMP abs` → `coroutine_yield()` (yield pattern)
+- `JMP (ind)` in scheduler → `coroutine_start()` (START dispatch)
+- `PLA/TAY/PLA/TAX/RTS` after TXS → `coroutine_resume()` (RESUME dispatch)
+Runtime: `coroutine.c/h` in nesrecomp/runner — Windows Fibers-based, generic (not game-specific).
+The old 200-line Fiber hack was deleted from extras.c.
 
 ---
 
@@ -212,16 +157,14 @@ approach 1 or 2 doesn't fully resolve them:
 **When:** Entering a robot master stage from stage select
 **Symptom:** The intro cutscene background glitches where the master sprite should appear. The master sprite never shows. Cutscene eventually proceeds to stage load.
 
-**Status:** Not yet investigated — blocked by Issue 7 (can't efficiently navigate native build to this point)
+**Status:** Not yet investigated. Issue 6 (scheduler) is now fixed, Issue 7 (slow boot) is fixed, so this is unblocked.
 
 ### Planned investigation
-1. Navigate both native + emulated to cutscene via TCP (or fix Issue 7 first)
+1. Navigate both native + emulated to cutscene via TCP
 2. Diff PPU state: CHR banks, nametable, OAM/sprites, palette
 3. Check if cutscene coroutine channel is running correctly (scheduler state)
 4. Trace any CHR bank or sprite write divergences
-
-### Relationship to Issue 6
-Issue 6 (scheduler broken) was previously marked as critical but the cutscene "eventually proceeds" — this may indicate the scheduler IS working (via Fibers) but some rendering state is wrong during the cutscene sequence.
+5. May be related to Issue 10 (portrait CHR issue) — both involve CHR bank mapping
 
 ---
 
@@ -278,23 +221,121 @@ The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. 
 
 ---
 
-## Tools created this session (Session 5)
+---
+
+## Issue 10: Garbled stage select portraits
+
+**Severity:** Major (visual)
+**When:** Stage select screen
+**Symptom:** Robot master names are correct but portrait CHR tiles are wrong/swapped. Portraits don't match their labels.
+**Screenshot:** `C:\Users\Matthew\Documents\ShareX\Screenshots\2026-04\MegaMan3Recomp_JiOk9wpcik.png`
+
+**Status:** Under investigation (Session 10)
+
+### Oracle comparison findings (at stage select)
+- CHR ROM bytes ($0000-$1FFF): **identical** between native and emulated
+- Nametable 0+1: **match**
+- OAM: **match**
+- CPU RAM game state ($20-$4F): **match**
+- Palette: slight diff (sprite backdrop `00` native vs `0f` emulated)
+- Scroll: native `(0,0)` vs emulated `(16,1)` — **divergence**
+- Mapper regs: native `[124,126,56,57,54,52,24,19]`, emulated **all zeros** (Issue 11)
+
+### Root cause: Wrong nametable mirroring (vertical instead of horizontal)
+
+**Confirmed:** Native has mirroring=2 (vertical), emulated has mirroring=3 (horizontal). Only ONE write to $A000 occurs in the entire native run — at frame 0 during RESET (`$FE5C: LDA #$00; STA $A000` → vertical). The game code that sets horizontal mirroring never executes.
+
+**$A000 writes in fixed bank (Ghidra):**
+- `$FE5C`: `LDA #$00; STA $A000` — RESET, sets vertical (EXECUTES)
+- `$C91F`: `LDA #$01; STA $A000` — sets horizontal (NEVER EXECUTES)
+- `$E3AF`: `LDA #$01; STA $A000` — sets horizontal (NEVER EXECUTES)
+- `$E45C`: `LDA #$00; STA $A000` — sets vertical
+
+**Why $C91F never executes:** `func_C910` calls `func_FF21()` (coroutine yield) at `$C917`. The `STA $A000` is at `$C91F`, AFTER the yield. The coroutine scheduler should resume `func_C910` past the yield point, but it appears the resume never happens — either the scheduler never starts this coroutine, or the resume doesn't reach the post-yield code.
+
+**MMC3 CHR regs match between native and emulated** — the portrait garbling is caused by wrong mirroring, not wrong CHR banks. With vertical mirroring, the PPU renderer resolves nametable addresses differently, showing tiles from wrong nametable pages.
+
+### Coroutine investigation (Session 10)
+
+`$C910` is NOT a separate coroutine — it's inlined code within `func_C8D0` (the main game coroutine, started at frame 0). The game flow is: `func_C8D0` → setup → yield → setup → falls through to `$C910` → yield at `$C917` → resume → `$C91F: STA $A000` (mirroring).
+
+**Only ONE coroutine_start ever** — at frame 0 with `$C8D0`. 39,023 resumes follow. The coroutine IS being resumed every frame but **never progresses past `S=$B6`**. It yields at the same stack depth on every frame. This means it's stuck in a loop — the game state machine within `func_C8D0` never advances from the intro/title phase into stage select setup.
+
+**Root cause hypothesis:** The coroutine is stuck in a loop at the intro/title screen yield-wait. The game expects some RAM value to change (set by NMI handler or other game logic) to trigger progression, but that value never changes. Alternatively, the game dispatches to bank-switched code that fails (dispatch miss) and the progression branch never fires.
+
+### Next steps
+1. Determine which yield point corresponds to SP=$B6 — trace what code runs between resume and yield
+2. Check if the game gets stuck at a `func_FF21` yield loop that never exits
+3. Look for dispatch misses during the coroutine's yield-resume cycle that might prevent state transitions
+
+---
+
+## Issue 11: Nestopia bridge — mapper_state returns zeros
+
+**Severity:** Fixed (Session 10)
+**When:** Querying `mapper_state` on emulated port (4373)
+**Symptom:** All MMC3 registers returned zero.
+
+**Root cause:** `debug_server.c` built-in `handle_mapper_state()` ran before `game_handle_debug_cmd()`, reading native mapper statics (zeros in emulated mode).
+
+**Fix:**
+1. Added `nestopia_bridge_get_mapper_state()` to `nestopia_bridge.cpp/h` — casts `Machine::image` → `Cartridge*` → `GetBoard()` → `Mmc3*`, reads `regs`, `banks`, IRQ state
+2. Added public getters to `NstBoardMmc3.hpp::BaseIrq` (`GetCount/Latch/Reload/Enabled`)
+3. Added public `GetBoard()` to `NstCartridge.hpp`
+4. Made `Mmc3::regs`, `banks`, `irq` public in `NstBoardMmc3.hpp`
+5. Changed `debug_server.c` dispatch order: game hook runs FIRST (allows overriding built-ins)
+6. Added `mapper_state` intercept in `extras.c` for `RUN_MODE_EMULATED`
+
+**Verified:** MMC3 R0-R7 now match exactly between native and emulated at stage select
+
+---
+
+## Issue 12: Bank 4 dispatch misses (stage entry crash)
+
+**Severity:** Fixed (temporary, Session 10)
+**When:** Selecting any stage from stage select
+**Symptom:** Game window closes. Log shows: `$A716 bank=4, $A00C bank=4, $A00F bank=4, $A012 bank=4`
+
+**Root cause:** Functions in upper 8KB of bank 4 ($A000-$BFFF) not discovered by function_finder's BFS from $A000.
+
+**Temporary fix:** Added 4 `extra_func` entries to `game.toml` for bank 4: `$A716`, `$A00C`, `$A00F`, `$A012`.
+
+**Permanent fix needed:** Multi-pass function discovery in `function_finder.c`:
+1. Pass 1: Walk fixed bank, collect every (bank, addr) pair reached via bank-switch + JSR
+2. Pass 2: Seed only discovered (bank, addr) pairs and BFS from those
+3. Eliminates blind seeding, catches all cross-bank targets
+
+### Additional undiscovered functions (build warnings)
+Dispatch table references these undefined functions:
+- Bank 9: `func_B838_b9`, `func_B84E_b9`, `func_BCB4_b9`, `func_BD8C_b9`
+- Bank 14: `func_8AAC_b14`, `func_8AC0_b14`
+- Bank 6: `func_A123_b6`, `func_A20A_b6`, `func_A253_b6`, `func_A0E2_b6`, `func_A0ED_b6`, `func_A1ED_b6`, `func_A8FF_b6`, `func_A23A_b6`, `func_A1A8_b6`
+- Fixed: `func_EC39`, `func_D6B8`, `func_EC34`
+
+These will crash when their code paths are hit. Multi-pass discovery should find them all.
+
+---
+
+## Tools
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/diff_ppu_state.py` | Full PPU diff: CHR, nametable, palette, PPU regs, mapper, key RAM between ports 4372/4373 |
-| `scripts/check_state.py` | Query game state on both ports, pause both, screenshot |
-| `scripts/tcp_navigate.py` | Navigate game step-by-step via TCP with state logging at each transition |
-| `scripts/bug_repro_stage.txt` | Input script to navigate to stage (timing-based, needs improvement with WAIT_RAM8) |
+| `tools/dbg.py` | TCP debug client (port 4372) |
+| `tools/full_compare.py` | Oracle comparison (native vs emulated) |
+| `tools/check_ports.py` | Quick TCP connectivity check |
+| `tools/nes_compare.py` | Dual-instance comparison |
+| `tools/time_travel.py` | Frame-by-frame RAM comparison |
+| `tools/follow_trace.py` | RAM write follower setup/dump |
 
 ---
 
 ## General Notes
-- Title screen, stage select, and gameplay are working
+- Title screen and stage select working (title correct, portraits garbled — Issue 10)
+- Stage entry no longer crashes (Issue 12 fixed temporarily)
+- Coroutine scheduler working via codegen-driven Fibers (Issue 6 fixed, Session 9)
 - Turbo mode runs at ~1500+ fps (Issue 7 fixed)
-- Game no longer freezes from recursive func_FF90 (Session 6 fix)
-- Stage background flicker persists (Issue 9 — awaiting disasm import)
-- Dispatch misses: $C297 (fixed bank, added), $BB34 (bank 14, added), plus likely more
+- No audio (Issue 4 — sound engine `jump_local_ptr` pattern unsupported)
+- Stage background flicker fixed (Issue 9, Session 7)
+- MMC3 8KB dispatch remapping working (Session 9)
 - TCP debug server on port 4372 (native) / 4373 (emulated)
-- Emulated oracle PPU reads return zeros (known Nestopia internal state gap)
-- Test scripts in `scripts/` directory for automated regression testing
+- Emulated oracle mapper_state returns zeros (Issue 11 — blocking for CHR investigation)

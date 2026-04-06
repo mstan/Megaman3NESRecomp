@@ -4037,3 +4037,21 @@ bank29 = [
     0xBDF9,
     0xBED2,
 ]
+
+# Temporary: bank 4 upper-half functions not found by BFS from $A000
+# These are dispatch targets hit during stage entry
+[[extra_func]]
+bank = 4
+addr = 0xA716
+
+[[extra_func]]
+bank = 4
+addr = 0xA00C
+
+[[extra_func]]
+bank = 4
+addr = 0xA00F
+
+[[extra_func]]
+bank = 4
+addr = 0xA012
