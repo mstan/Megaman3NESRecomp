@@ -304,6 +304,31 @@ int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
     }
 #endif
 
+    /* dispatch_miss_last — last dispatch miss with caller + 6502 stack snapshot */
+    if (strcmp(cmd, "dispatch_miss_last") == 0) {
+        extern uint32_t g_miss_count_any;
+        extern uint16_t g_miss_last_addr;
+        extern uint64_t g_miss_last_frame;
+        extern int      g_miss_last_bank;
+        extern char     g_miss_last_caller[64];
+        extern char     g_miss_last_stack2[64];
+        extern uint8_t  g_miss_last_sp;
+        extern uint8_t  g_miss_last_stack_bytes[16];
+        char stk[80]; int p = 0;
+        for (int i = 0; i < 16; i++)
+            p += snprintf(stk + p, sizeof(stk) - p, "%s%02X", i ? " " : "",
+                          g_miss_last_stack_bytes[i]);
+        debug_server_send_fmt(
+            "{\"id\":%d,\"count\":%u,\"addr\":\"$%04X\",\"bank\":%d,"
+            "\"frame\":%llu,\"caller\":\"%s\",\"caller_parent\":\"%s\","
+            "\"sp\":\"$%02X\",\"stack\":\"%s\"}\n",
+            id, (unsigned)g_miss_count_any, g_miss_last_addr, g_miss_last_bank,
+            (unsigned long long)g_miss_last_frame,
+            g_miss_last_caller, g_miss_last_stack2,
+            g_miss_last_sp, stk);
+        return 1;
+    }
+
     if (strcmp(cmd, "mm3_state") == 0) {
         debug_server_send_fmt(
             "{\"id\":%d,\"game_mode\":%d,\"sub_mode\":%d,"

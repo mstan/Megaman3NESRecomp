@@ -1,4 +1,46 @@
-# Mega Man 3 Recomp — Session 19 Handoff
+# Mega Man 3 Recomp — Session 20 Handoff
+
+## Session 19 Summary (2026-04-06)
+
+**Objective:** Fix Issue 14 (gameplay dispatch misses) starting from the first
+miss triggered by slide input.
+
+**Result:** Fixed. Slide no longer causes dispatch misses. 13 player-state
+handlers that were previously unreachable are now discovered.
+
+**Root cause:** MM3 dispatches on player state ($30) through a ZP-indirect
+JMP whose pointer is built at runtime from parallel lo/hi byte tables in
+ROM. The existing `function_finder.c` `JMP (ind)` handler only resolved
+vectors stored contiguously in ROM; this split-table idiom was invisible.
+
+**Fix:** New auto-discovery pass in `nesrecomp/recompiler/src/function_finder.c`
+that scans every bank for the exact 13-byte pattern:
+`B9/BD lo hi | 85 zp | B9/BD lo hi | 85 zp+1 | 6C zp 00`.
+For each match, both tables are read (bypassing `is_data_region` for the
+table positions themselves — data_region means "don't disassemble as code",
+which is exactly compatible with "read as data here"). Every
+`(hi[i]<<8 | lo[i])` entry is seeded as a function, bounded by
+`validate_code_target` per entry, max 64 entries.
+
+**Diagnostics added:**
+- `runtime.c`: extended `nes_log_dispatch_miss` to capture caller (top of
+  recomp stack), parent, SP, and 16 bytes of 6502 stack at the miss moment
+- `extras.c`: new TCP command `dispatch_miss_last` returns JSON with
+  `{count, addr, bank, frame, caller, caller_parent, sp, stack}`
+- `tools/verify_pattern.py`: standalone scanner to enumerate all 15
+  split-table dispatch sites in MM3
+
+**Still open:**
+- `$BB34 bank=14` dispatch miss — surfaces only in longer gameplay. Not
+  a split-table pattern (no `34 BB` bytes anywhere in ROM). Likely
+  computed via PHA/PHA/RTS or RAM-stored pointer. See Issue 14 remaining.
+- Issues 8 (cutscene) and 15 (enemies) — not re-verified yet. Quick
+  post-fix gameplay test showed Mega Man shooting and standing on stage
+  terrain cleanly; more thorough verification needed next session.
+
+---
+
+# Mega Man 3 Recomp — Session 19 Handoff (HISTORICAL)
 
 ## FIRST: Read These Files
 

@@ -320,21 +320,77 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 
 ## Issue 13: Dispatch miss $D3FD bank 13
 
-**Severity:** Minor (gameplay unaffected so far)
-**When:** During gameplay, frame ~2158
+**Severity:** Fixed (Session 19, 2026-04-06)
+**When:** During gameplay, triggered by slide input (DOWN+A)
 **Symptom:** `[Dispatch] MISS: no func for $D3FD bank=13`
 
-**Status:** Open — undiscovered function. Likely needs `extra_func 13 0xD3FD` in game.toml, or better multi-pass discovery in `function_finder.c`.
+### Root cause
+$D3FD is a label *inside* `func_D38E` (the function containing the player-state
+jump-table handlers). It is reached via an indirect JMP through a zero-page
+pointer that is populated from parallel lo/hi byte tables in ROM:
+
+```asm
+$CD8B: LDY $30             ; player state index
+$CD8D: LDA $CD9A,Y          ; lo table
+$CD90: STA $00
+$CD92: LDA $CDB0,Y          ; hi table
+$CD95: STA $01
+$CD97: JMP ($00)            ; dispatch to player-state handler
+```
+
+The tables at `$CD9A` (lo) and `$CDB0` (hi) have 22 entries. State 2 → $D3FD
+is the slide handler. Before the fix, 18 of 22 entries in this table were
+missing from the function list because the recompiler's function finder did
+not recognize this idiom — the existing `JMP (ind)` handler only resolved
+vectors stored contiguously in ROM, not ZP-indirect jumps whose pointer is
+built at runtime from split lo/hi byte tables.
+
+### Fix
+Added a generic auto-discovery pass in `nesrecomp/recompiler/src/function_finder.c`
+that scans every bank for the 13-byte split-table-dispatch pattern:
+`B9/BD lo hi | 85 zp | B9/BD lo hi | 85 zp+1 | 6C zp 00`. For each match,
+both tables are read from ROM and every `(hi[i]<<8 | lo[i])` entry is seeded
+as a function, bounded by `validate_code_target` per entry with a max of 64
+entries per site.
+
+**Crucial detail:** the scanner must NOT apply `is_data_region` to the table
+positions themselves — the tables are typically declared as data_region
+precisely so they aren't decoded as code, but the scanner is reading them
+as data, which is exactly right. `is_data_region` is only checked for the
+combined target address.
+
+### Results
+Scanner found 15 split-table dispatch sites across MM3, seeding 16 new
+function entries. For the $CD8D site specifically: +13 new functions,
+including `func_D3FD`. Post-fix gameplay test: zero dispatch misses for
+slide, jump, shoot, walk, up, start, select inputs.
+
+### Related fix: same generic pass fixes dispatch misses for all other
+player-state handlers (D4EB, D613, D6AB, D831, D858, D929, D991, D9D3,
+DBE1, D779, CDCC, DD14, DDAA, DE52, DF33, DF8A, E08C) — 18 player states
+total were all reached via the same pattern.
 
 ---
 
 ## Issue 14: Many dispatch misses during gameplay (sliding, actions, etc.)
 
-**Severity:** Major (gameplay-affecting)
+**Severity:** Mostly fixed (Session 19, 2026-04-06)
 **When:** During gameplay, triggered by player actions
-**Symptom:** Many dispatch misses logged during normal gameplay. Confirmed: **Mega Man sliding** triggers a dispatch miss. Other player actions (jumping, shooting, weapon switch?) likely trigger more.
+**Symptom:** Many dispatch misses logged during normal gameplay. Confirmed: **Mega Man sliding** triggers a dispatch miss.
 
-**Status:** Open. This is the same class of bug as Issue 12 (bank 4 dispatch misses) — the function finder is missing entry points reachable only via certain runtime code paths.
+**Status:** The primary class — player-state handler dispatch via split
+lo/hi JMP(zp) jump table at `$CD8D` — is fixed generically. See Issue 13
+for full root cause and fix. 13 of the 22 player-state handlers were
+missing (D3FD, D4EB, D613, D6AB, D831, D858, D929, D991, D9D3, DBE1, D779,
+CDCC, DD14, DDAA, DE52, DF33, DF8A, E08C). All now discovered by the
+auto split-table scanner in `function_finder.c`.
+
+**Remaining:** Stress-test runs still surface a miss at `$BB34 bank=14`
+(not triggered by the basic slide/jump/shoot input set, only by longer
+gameplay sessions). No direct `$34 $BB` byte reference exists anywhere
+in ROM, so $BB34 is computed at runtime — likely a PHA/PHA/RTS pattern
+with `A9 BA 48 A9 33 48 60` or similar, or a RAM-based dispatch. Needs
+further investigation as a separate class of miss. This is the same class of bug as Issue 12 (bank 4 dispatch misses) — the function finder is missing entry points reachable only via certain runtime code paths.
 
 **Probable causes:**
 - The function finder's BFS doesn't reach action-specific code paths from the static seeds
