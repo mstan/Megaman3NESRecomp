@@ -151,20 +151,25 @@ The old 200-line Fiber hack was deleted from extras.c.
 
 ---
 
-## Issue 8: Robot master cutscene background glitch
+## Issue 8: Robot master intro cutscene SKIPPED entirely
 
-**Severity:** Major (visual)
+**Severity:** Major (gameplay/visual)
 **When:** Entering a robot master stage from stage select
-**Symptom:** The intro cutscene background glitches where the master sprite should appear. The master sprite never shows. Cutscene eventually proceeds to stage load.
+**Symptom:** The intro cutscene (boss name card, portrait, teleport-down animation) is **skipped entirely** — game goes straight from stage select to gameplay. On real hardware/emulator, the cutscene plays for several seconds before gameplay begins.
 
-**Status:** Not yet investigated. Issue 6 (scheduler) is now fixed, Issue 7 (slow boot) is fixed, so this is unblocked.
+**Status:** Open. Originally reported in Session 8 as a cutscene background glitch ("master sprite never shows"). After Session 17's MMC3 8KB dispatch fix, the cutscene is no longer just glitched — it doesn't run at all.
+
+**Likely root causes:**
+- A coroutine channel responsible for the cutscene is not being scheduled (scheduler state mismatch)
+- A dispatch miss during cutscene init causes the cutscene routine to bail out
+- The cutscene's coroutine is being terminated prematurely
 
 ### Planned investigation
-1. Navigate both native + emulated to cutscene via TCP
-2. Diff PPU state: CHR banks, nametable, OAM/sprites, palette
-3. Check if cutscene coroutine channel is running correctly (scheduler state)
-4. Trace any CHR bank or sprite write divergences
-5. May be related to Issue 10 (portrait CHR issue) — both involve CHR bank mapping
+1. Compare `sched_state` (channel table) between native and emulated immediately after pressing A on stage select
+2. Check `sched_trace` for cutscene-related coroutine starts/yields
+3. Look for dispatch misses in the stdout log around frame 600-1200 (cutscene window)
+4. Check $31 (game_mode) and $46 (sub_mode) transitions — should hit a "cutscene" value before reaching gameplay (mode 1)
+5. Compare RAM state with emulated oracle at the moment stage select returns
 
 ---
 
@@ -323,6 +328,65 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 
 ---
 
+## Issue 14: Many dispatch misses during gameplay (sliding, actions, etc.)
+
+**Severity:** Major (gameplay-affecting)
+**When:** During gameplay, triggered by player actions
+**Symptom:** Many dispatch misses logged during normal gameplay. Confirmed: **Mega Man sliding** triggers a dispatch miss. Other player actions (jumping, shooting, weapon switch?) likely trigger more.
+
+**Status:** Open. This is the same class of bug as Issue 12 (bank 4 dispatch misses) — the function finder is missing entry points reachable only via certain runtime code paths.
+
+**Probable causes:**
+- The function finder's BFS doesn't reach action-specific code paths from the static seeds
+- Cross-bank calls during action handlers reference functions in banks not yet discovered
+- The Session 17 cross-8KB mirroring fix in `function_finder.c` may need to be extended to indirect JMPs and table-based dispatch as well
+
+### Planned investigation
+1. Capture full dispatch miss log during gameplay session (slide, jump, shoot, walk into enemies)
+2. Group misses by bank to see which banks have undiscovered functions
+3. Check whether each missed address is in a 16KB bank's $A000+ range (which would suggest cross-8KB miss) or elsewhere
+4. Consider implementing **multi-pass discovery** (Issue 12 permanent fix): walk fixed bank first, collect all (bank, addr) pairs reached via bank-switch + JSR, then BFS from those discovered pairs
+5. As a stopgap, add observed misses as `extra_func` entries in game.toml
+
+### Verification
+- Run gameplay session, exercise all player actions
+- Confirm zero dispatch misses
+- Confirm slide, jump, shoot all work correctly
+
+---
+
+## Issue 15: Enemies have no collision and garbled tile graphics
+
+**Severity:** Major (gameplay-breaking)
+**When:** During gameplay
+**Symptom:** Enemy sprites appear as **garbled tiles** (wrong CHR data) and have **no collision physics** (Mega Man passes through them without taking damage, and they don't react to bullets).
+
+**Status:** Open. Likely two related sub-issues:
+
+### Sub-issue 15a: Enemy CHR tiles wrong
+Enemy sprite CHR pattern data is wrong. Possible causes:
+- The MMC3 CHR bank registers (R0-R5) are set to wrong values when enemies spawn
+- A CHR bank-switching function is not being called (dispatch miss in enemy spawn code path)
+- Enemy CHR tile data is corrupted during DMA/copy
+- Enemy sprite OAM entries point to wrong CHR tile indices
+
+### Sub-issue 15b: No collision physics
+Enemy collision detection isn't running. Possible causes:
+- Enemy update loop (sprite AI / collision check) is not being called — likely a dispatch miss in the enemy AI dispatch chain
+- The enemy state tables are corrupted (related to Issue 14 / data-as-code residue?)
+- Related to Issue 14: an enemy AI function in some bank is missing from dispatch
+
+**Likely shares root cause with Issue 14** — both point to function discovery gaps in enemy code paths.
+
+### Planned investigation
+1. Compare native vs emulated OAM (enemy sprite entries) at the same gameplay state
+2. Compare CHR RAM (pattern table data) for the sprite tile range
+3. Check MMC3 R0-R5 (CHR bank registers) — both builds should have identical values
+4. Trace dispatch misses during enemy spawn (set up native, walk Mega Man to where an enemy spawns)
+5. Compare enemy slot RAM ($0300-$05FF range typically) between builds
+
+---
+
 ## Tools
 
 | Script | Purpose |
@@ -337,14 +401,19 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 ---
 
 ## General Notes
-- Title screen, stage select, and stage gameplay all working
+- Title screen, stage select, and basic gameplay all reachable
+- Mega Man spawns and stands correctly, no rendering flicker
 - Stage select portraits correct (Issue 10 fixed, Session 17)
 - Stage background flicker fixed (Issue 9, Session 17 — MMC3 8KB cross-boundary dispatch)
-- Stage entry no longer crashes (Issue 12 fixed temporarily)
 - Coroutine scheduler working via codegen-driven Fibers (Issue 6 fixed, Session 9)
 - Turbo mode runs at ~1500+ fps (Issue 7 fixed)
-- No audio (Issue 4 — sound engine `jump_local_ptr` pattern unsupported)
 - MMC3 8KB dispatch: cross-boundary calls + mirrored function discovery (Session 17)
 - TCP debug server on port 4372 (native) / 4373 (emulated)
 - Emulated oracle mapper_state fixed (Issue 11, mirroring fixed in Session 15)
+
+### KNOWN GAPS (Session 18 priorities)
+- **Robot master intro cutscene SKIPPED entirely** (Issue 8) — game jumps straight to gameplay
+- **Many gameplay dispatch misses** (Issue 14) — Mega Man sliding triggers one; other actions likely too
+- **Enemies have garbled tiles AND no collision** (Issue 15) — likely shares root cause with Issue 14
+- **No audio** (Issue 4) — sound engine `jump_local_ptr` pattern unsupported (recompiler change needed)
 - Minor dispatch miss: $D3FD bank 13 (Issue 13, not yet impacting gameplay)
