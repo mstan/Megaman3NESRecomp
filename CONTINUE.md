@@ -1,132 +1,157 @@
-# Mega Man 3 Recomp — Session 11 Handoff
+# Mega Man 3 Recomp — Session 16 Handoff
 
-Read CLAUDE.md first. Follow its debugging protocol EXACTLY.
-Read ISSUES.md for full issue history.
-Read the memory files: `reference_tcp_debug.md`, `feedback_debugging_approach.md`, `feedback_tcp_not_printf.md`.
+## FIRST: Read These Files
+
+1. **CLAUDE.md** — The project rules. Non-negotiable. Key points:
+   - This is a **static NES recompiler**, not an emulator. We achieve byte-level equivalence with an emulator oracle.
+   - **NO GUESSING.** Every claim must be backed by measured data.
+   - **NO STDOUT DEBUGGING.** All debugging uses the TCP ring buffer. Printf/logging is forbidden.
+   - **ALWAYS USE ORACLE COMPARISON.** Native vs emulated must be compared.
+   - **FIX ROOT CAUSE ONLY.** No symptom patches. No speculative fixes.
+   - **FIX THE TOOL, NOT THE OUTPUT.** Never modify generated code. Fix code_generator.c or runner.
+   - **TCP debugging is mandatory.** If tooling is missing, build it first, then continue.
+   - **Ghidra before guessing.** Call `mcp__ghidra_mm3__get_program_info` before investigating any unknown 6502 address.
+   - Debugging protocol: Sync state → Dump both sides → Diff → First divergence → Trace write → Classify → Fix.
+   - Build commands, key files, input scripts, save states are all documented there.
+
+2. **Memory files** (in `~/.claude/projects/.../memory/`):
+   - `reference_tcp_debug.md` — **TCP command reference.** Ports 4372 (native) / 4373 (emulated). JSON-over-newline protocol. Commands: `ping`, `read_ram`, `read_ppu`, `mapper_state`, `mm3_state`, `sched_state`, `a000_trace`, `screenshot`, `call_stack`, `watch`, `follow`, `pause/continue/step`, `run_to_frame`, `frame_timeseries`, `history`, etc. Input bitmask: 0x80=A, 0x40=B, 0x20=SELECT, 0x10=START, 0x08=UP, 0x04=DOWN, 0x02=LEFT, 0x01=RIGHT. Debug.ini must exist next to exe for native TCP to start.
+   - `feedback_debugging_approach.md` — **Debugging priority.** Rule 0: TCP server first. Rule 1: extend TCP if needed (add commands to `game_handle_debug_cmd()` in extras.c). Rule 2: Ghidra to understand 6502 code, then verify with TCP. Never skip to Ghidra or code-level logging first.
+   - `feedback_tcp_not_printf.md` — **TCP over printf.** Build TCP commands instead of adding printf. Printf is a last resort, must be temporary.
+   - `feedback_fix_codegen.md` — When native diverges from emulated, fix the recompiler/runner. Don't propose workarounds or claim things are impossible.
+   - `feedback_fix_nesrecomp.md` — nesrecomp is beta. Fix regressions in it, don't work around them.
+   - `feedback_tcp_port.md` — One game instance at a time. Unique ports per game.
+
+3. **ISSUES.md** — Full issue history. Issues 1-3, 6-7, 9, 11 are fixed. Issue 4/5 (audio) are deferred. **Issue 10 is the active bug.**
 
 ## Branch State
 
-- **master**: Session 10 work committed (Nestopia bridge fix, extra_func, ISSUES.md)
-- **fix/coroutine-resume-codegen**: WIP branch with restore of replace_func scheduler (NOT yet working — coroutine gets stuck)
+**fix/coroutine-resume-codegen** — Issue 10 (garbled stage select portraits) is the active investigation.
 
-## Priority 1: Fix Coroutine Scheduler (the real fix)
+## Issue 10: Garbled Stage Select Portraits
 
-### The Problem
+### The Symptom
 
-The codegen-driven coroutine system (session 9) has a **push_all_jsr corruption bug** that causes garbled stage select portraits. Root cause chain:
+The boss portrait FACES in rows 2 and 3 of the stage select are swapped. The name TEXT labels are correct.
 
-1. Stage select portraits are garbled because nametable mirroring is wrong (vertical instead of horizontal)
-2. The game code at `$C91F` that writes `STA $A000` (horizontal mirroring) is inside `func_C8D0` (main game coroutine) — it never executes because the coroutine is stuck
-3. The coroutine is stuck because the codegen's RESUME path has a bug
-
-### The Bug (fully diagnosed)
-
-In the 6502 scheduler's RESUME sequence at `$FEE2-$FEF1`:
-
+**Native (broken):**
 ```
-$FEE2: LDA $82,X    → restore saved SP
-$FEE4: TAX
-$FEE5: TXS          → SP now points to coroutine's saved stack
-$FEE6: LDA $91      → check channel
-$FEEA: JSR $C545     → *** THIS IS THE BUG ***
-$FEED: PLA / TAY     → pop saved Y
-$FEEF: PLA / TAX     → pop saved X
-$FEF1: RTS           → coroutine_resume()
+Row 1: Spark ✓   Snake ✓   Needle ✓   (correct faces and names)
+Row 2: Gemini ✗  Magnet ✗  Shadow ✗   (WRONG faces — these belong in row 3)
+       HARD MAN  [cursor]  TOP MAN    (correct names)
+Row 3: Hard ✗    Mega ✗    Top ✗      (WRONG faces — these belong in row 2)
+       GEMINI    MAGNET    SHADOW     (correct names)
 ```
 
-The bug: `JSR $C545` at `$FEEA` runs AFTER `TXS` restored the coroutine's stack pointer. With `push_all_jsr = true`, this JSR pushes a 2-byte return address to the 6502 stack — **overwriting the saved Y and X** that `func_FF21` pushed before yielding. The subsequent PLA/PLA at `$FEED/$FEEF` read **corrupted values** (the JSR return address bytes instead of Y/X).
+**Emulated (correct):** Hard/Mega/Top faces in row 2, Gemini/Magnet/Shadow faces in row 3.
 
-On the real 6502, this works fine because JSR/RTS are balanced — the return address is pushed and then popped by RTS, leaving Y/X intact for the PLAs. But in the recomp with `push_all_jsr`, the return address IS written to `g_ram` at the stack location, physically overwriting the Y/X bytes. Even though `func_C545` returns and S is restored, the bytes in RAM are already corrupted.
+### What Session 15 Proved
 
-### The Proper Universal Fix
+1. **Mirroring is NOT the issue.** Sessions 12-14 diagnosed a mirroring mismatch. This was wrong — the `mapper_state` TCP command had a bug reading `ctrl0 bit 0` (CHR A12 inversion) as mirroring. Both builds have **vertical mirroring**. The mapper_state command is now fixed to read actual PPU nametable bank mapping via `nestopia_bridge_get_mirroring()`.
 
-**Do NOT inject `coroutine_*` calls into the 6502 scheduler flow.** The 6502 scheduler code was designed for a single CPU where JSR/RTS are atomic. Splitting it across Fibers (scheduler fiber vs coroutine fiber) while keeping `push_all_jsr` breaks the stack invariants.
+2. **All steady-state PPU data is IDENTICAL between builds:**
+   - Nametable pages 0 and 1: **0 differences** (tile indices match perfectly)
+   - CHR pattern data: **0 differences** across all 8KB
+   - BG palette: **identical**
+   - Scroll/PPUCTRL shadows: **identical** ($FC-$FF = 00001888)
+   - MMC3 bank registers: **identical** (R0=$7C R1=$7E R2=$38 R3=$39 R4=$36 R5=$34 R6=$18 R7=$13)
 
-**Instead:** When the codegen detects the scheduler pattern (`LDX #$FF; TXS` + channel loop + `JMP (ind)` START + `PLA/TAY/PLA/TAX/RTS` RESUME), emit a **single C function** that implements the entire scheduler loop:
+3. **The bug is CHR bank switching TIMING during portrait loading.** Since nametable tile indices are correct (the names match their positions) but the portrait face bitmaps are wrong, the CHR tile data must have been different at the moment the portrait tiles were written to CHR RAM. The game loads portrait CHR data by switching MMC3 CHR banks and copying tile patterns. If the bank switches happen in the wrong order, the wrong portrait patterns end up in the wrong tile slots.
 
-```c
-void coroutine_run_scheduler(void) {
-    while (1) {
-        g_cpu.S = 0xFF;
-        // Scan channels...
-        // For START: coroutine_start(channel, addr);
-        // For RESUME: coroutine_resume(channel);
-        // Call func_C545() or equivalent WITHOUT push_all_jsr
-        // Wait for NMI via maybe_trigger_vblank()
-    }
-}
-```
+### What to Do Next
 
-This is what the old extras.c `sched_fiber_proc` did. The codegen should:
-1. Detect the scheduler entry pattern
-2. Analyze the channel table layout (address of state bytes, timer, saved SP)
-3. Identify the per-channel hook call (func_C545 in MM3, might differ per game)
-4. Emit a generic C scheduler loop with Fiber dispatch
+**Trace the CHR bank switch sequence during stage select portrait loading:**
 
-The yield function (`func_FF21` pattern: `TSX; STX zp,Y; JMP scheduler`) should:
-1. Save state to channel table (as it does now)
-2. Call `coroutine_yield()` to switch to scheduler fiber
-3. After resume: restore X/Y from 6502 stack, adjust SP, return
+1. Add a CHR bank write trace (like the existing `a000_trace`) that records MMC3 $8000/$8001 writes with frame number and caller function. This will capture the exact sequence of CHR bank switches during portrait setup.
 
-### What Was Tried
+2. Run both native and emulated to the stage select. Compare the CHR bank switch traces to find where the native build diverges.
 
-1. **Restore replace_func for $FEAA/$FF21** (on `fix/coroutine-resume-codegen` branch): The old extras.c scheduler code was restored, but the game gets stuck — coroutine enters RUNNING state and never yields back. This is because other session 9/10 changes (MMC3 8KB remapping, data regions, dispatch table structure) altered the code flow. The old scheduler worked with the pre-session-9 generated code but not with the current regenerated code.
+3. Key function: **func_939E_b12** — called multiple times with different X register values ($10, $11, $03, $04) during stage select setup in func_9009_b12. This likely handles CHR bank switching for portrait tile loading. Investigate in Ghidra.
 
-2. **Move PLA/PLA from scheduler to yield function**: Didn't help because the damage from `func_C545`'s JSR push already happened before the RESUME's coroutine_resume() call.
+4. Once the divergent bank switch is identified, determine why — likely a codegen issue (wrong execution order), a dispatch miss (function not found), or a timing issue (NMI interrupting CHR loading and changing banks).
 
-3. **Undo PLA/PLA by restoring SP in RESUME handler**: Didn't fix portraits because the core issue is the coroutine not progressing (mirroring write at $C91F requires the player to select a stage — it's post-stage-select code, not during-stage-select).
+### Key Addresses
 
-### Key Files
-
-| File | What to change |
-|------|---------------|
-| `nesrecomp/recompiler/src/code_generator.c` | Emit full C scheduler loop instead of patching coroutine_* into 6502 flow |
-| `nesrecomp/runner/src/coroutine.c` | May need `coroutine_run_scheduler()` entry point |
-| `nesrecomp/runner/include/coroutine.h` | Update API if needed |
-| `extras.c` | Remove replace_func scheduler once codegen works |
-| `game.toml` | Remove replace_func entries once codegen works |
-
-### Key Addresses (MM3 scheduler)
-
-| Address | What | Pattern |
-|---------|------|---------|
-| `$FEAA` | Scheduler loop entry | `LDX #$FF; TXS` |
-| `$FEDF` | START dispatch | `JMP ($93)` |
-| `$FEEA` | Channel 0 hook | `JSR $C545` (input read) |
-| `$FEF1` | RESUME dispatch | `PLA/TAY/PLA/TAX/RTS` |
-| `$FF21` | Yield function | Pushes X/Y, saves SP, jumps to scheduler |
-| `$FF14` | Channel offset helper | `LDA $91; ASL; ASL; TAX; RTS` |
-| `$80-$8F` | Channel table | 4 bytes/channel × 4 channels |
-| `$90` | Dispatch flag | Set to 0 at loop start |
-| `$91` | Current channel | Channel index (0-3) |
-| `$93/$94` | START address | Low/high byte of coroutine entry |
-
-## Priority 2: Stage Entry (RESOLVED)
-
-4 extra_func entries added for bank 4 ($A716, $A00C, $A00F, $A012). No more dispatch misses at stage select. Permanent fix (multi-pass function discovery) still needed.
-
-## Session 10 Accomplishments
-
-1. **Nestopia bridge mapper state** (Issue 11 FIXED): Real MMC3 registers now exposed via TCP on emulated port 4373
-2. **Stage entry crash** (Issue 12 FIXED): 4 extra_func entries for bank 4
-3. **ISSUES.md cleaned up**: All issues updated, stale entries fixed
-4. **Portrait root cause fully diagnosed**: Mirroring wrong → coroutine stuck → codegen push_all_jsr corruption bug identified
+| Address | Bank | What |
+|---------|------|------|
+| `$939E` | 8KB 24 (16KB 12) | func_939E_b12 — likely CHR bank setup for portraits |
+| `$9009` | 8KB 24 (16KB 12) | Title/stage select init — calls 939E multiple times |
+| `$9258` | 8KB 24 (16KB 12) | Stage select input loop entry |
+| `$8000/$8001` | mapper regs | MMC3 bank select/data — controls CHR mapping |
+| `$C8D0` | fixed | Main coroutine entry |
+| `$C8FF` | fixed | Game mode init (reached AFTER stage select returns) |
 
 ## Build Commands
 
 ```bash
-CMAKE="/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+# Build with MSBuild (cmake generator not available in bash shell)
+"/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe" \
+  "F:/Projects/nesrecomp-release/megaman3/build/MegaMan3Recomp.sln" \
+  -p:Configuration=Release -p:Platform=x64 -v:minimal
 
 # Build recompiler (after code_generator.c changes)
-"$CMAKE" --build nesrecomp/build/recompiler --config Release
+cmake --build nesrecomp/build/recompiler --config Release
 
 # Regenerate game code
 nesrecomp/build/recompiler/Release/NESRecomp.exe "Mega-Man 3 # NES.NES"
-
-# Build game project
-"$CMAKE" --build build --config Release
 ```
 
-## TCP Ports
-- Native: **4372**
-- Emulated: **4373**
+## Running the Game
+
+```bash
+cd build/Release
+
+# Native (port 4372):
+./MegaMan3Recomp.exe "path/to/Mega-Man 3 # NES.NES" --script path/to/script.txt > C:/temp/stdout.txt 2>&1
+
+# Emulated oracle (port 4373):
+./MegaMan3Recomp.exe "path/to/Mega-Man 3 # NES.NES" --emulated --script path/to/script.txt > C:/temp/stdout.txt 2>&1
+```
+
+Kill before relaunch: `taskkill //F //IM MegaMan3Recomp.exe`
+
+## TCP Query Tool
+
+```bash
+# Generic TCP query:
+python3 tools/tcp_query.py <port> <command>
+
+# Examples:
+python3 tools/tcp_query.py 4372 mm3_state
+python3 tools/tcp_query.py 4372 a000_trace
+python3 tools/tcp_query.py 4373 mapper_state
+```
+
+## TCP Commands (Session 15 additions)
+
+| Command | Description |
+|---------|-------------|
+| `a000_trace` | $A000 write history — 64-entry ring buffer with frame, value, caller function |
+| `mapper_state` | MMC3 state — **now reports correct mirroring** from Nestopia PPU in emulated mode |
+| `mirror_debug` | $A000 write count, last value, current mirroring |
+
+See `reference_tcp_debug.md` in memory for the full command list.
+
+## Scripts Available
+
+| Script | Path | Purpose |
+|--------|------|---------|
+| `scripts/mirror_hold.txt` | Game script | Boot → title → Start → stage select, hold 5 min for TCP |
+| `tools/tcp_query.py` | Python | Generic TCP query (port, command) |
+| `tools/nt_diff.py` | Python | Full nametable comparison between native and emulated |
+| `tools/chr_diff.py` | Python | Full CHR pattern comparison between builds |
+| `tools/full_state_diff.py` | Python | PPU register/palette/scroll comparison |
+| `tools/check_nt2.py` | Python | Deep nametable analysis (single build) |
+| `tools/check_nt_emu.py` | Python | Deep nametable analysis (emulated) |
+| `tools/dbg.py` | Python | Original TCP debug client |
+
+## Fixes Applied This Session
+
+1. **extras.c** — `mapper_state` mirror field now calls `nestopia_bridge_get_mirroring()` instead of reading wrong ctrl0 bit
+2. **nestopia_bridge.cpp/h** — Added `nestopia_bridge_get_mirroring()` reading PPU nametable bank mapping
+3. **mapper.c/h** — Added $A000 write trace ring buffer (64 entries: frame, value, caller)
+4. **extras.c** — Added `a000_trace` TCP command
+
+## Ghidra State
+
+4 programs open: bank11.bin, bank12.bin [has stage select code], bank14.bin, bank15.bin. func_939E_b12 is at $939E in bank12.bin.

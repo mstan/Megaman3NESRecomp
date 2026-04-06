@@ -59,6 +59,9 @@ typedef struct {
 
 void nestopia_bridge_get_mapper_state(NestopiaMapperState *out);
 
+/* Returns actual PPU mirroring: 2=vertical, 3=horizontal, 0=single-screen, -1=unknown */
+int nestopia_bridge_get_mirroring(void);
+
 #ifdef __cplusplus
 }
 #endif

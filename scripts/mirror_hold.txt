@@ -1,0 +1,9 @@
+# Boot -> Title -> Stage Select, hold for TCP inspection
+WAIT 400
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+LOG Stage select reached
+WAIT 18000
+EXIT 0

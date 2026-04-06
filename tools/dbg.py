@@ -28,6 +28,7 @@ Usage:
     python dbg.py entity_table
     python dbg.py ppu_state
     python dbg.py call_stack
+    python dbg.py screenshot [path]     # default: C:/temp/dbg_shot.png
     python dbg.py quit
 """
 import socket
@@ -113,6 +114,8 @@ def main():
     elif cmd == "frame_range" and len(args) >= 2:
         kwargs["start"] = int(args[0])
         kwargs["end"] = int(args[1])
+    elif cmd == "screenshot" and len(args) >= 1:
+        kwargs["path"] = args[0]
 
     send_cmd(cmd, **kwargs)
 

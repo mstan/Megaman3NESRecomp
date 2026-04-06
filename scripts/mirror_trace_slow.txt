@@ -1,0 +1,22 @@
+# Boot -> Title -> Stage Select, NO TURBO for TCP inspection time
+
+# Wait for title screen (no turbo = ~7 sec real time)
+WAIT 400
+LOG Title screen reached
+
+# Press Start
+HOLD START
+WAIT 3
+RELEASE START
+LOG Start pressed
+
+# Wait for stage select
+WAIT 200
+LOG Stage select visible
+SCREENSHOT mirror_trace_stage_select.png
+
+# Stay at stage select for 30 seconds (1800 frames at 60fps)
+WAIT 1800
+
+LOG Done waiting
+EXIT 0

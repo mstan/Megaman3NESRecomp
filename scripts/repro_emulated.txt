@@ -1,0 +1,33 @@
+# Emulated reproduction: boot -> title -> stage select -> enter stage
+TURBO ON
+WAIT 400
+SCREENSHOT C:/temp/emu_01_title.png
+LOG === Emulated: Title screen ===
+
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+SCREENSHOT C:/temp/emu_02_stageselect.png
+LOG === Emulated: Stage select ===
+
+WAIT 60
+SCREENSHOT C:/temp/emu_03_stageselect_stable.png
+LOG === Emulated: Stage select stable ===
+
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 300
+SCREENSHOT C:/temp/emu_04_stage_entry.png
+LOG === Emulated: Stage entry ===
+
+WAIT 300
+SCREENSHOT C:/temp/emu_05_gameplay.png
+LOG === Emulated: Gameplay ===
+
+WAIT 300
+SCREENSHOT C:/temp/emu_06_late.png
+LOG === Emulated: Late gameplay ===
+
+EXIT 0

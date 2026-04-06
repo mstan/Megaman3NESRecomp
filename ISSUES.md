@@ -230,43 +230,24 @@ The recompiler's 16KB bank granularity doesn't match MMC3's 8KB bank switching. 
 **Symptom:** Robot master names are correct but portrait CHR tiles are wrong/swapped. Portraits don't match their labels.
 **Screenshot:** `C:\Users\Matthew\Documents\ShareX\Screenshots\2026-04\MegaMan3Recomp_JiOk9wpcik.png`
 
-**Status:** Under investigation (Session 10)
+**Status:** Open — CHR bank timing issue (Session 15 narrowed root cause)
 
-### Oracle comparison findings (at stage select)
-- CHR ROM bytes ($0000-$1FFF): **identical** between native and emulated
-- Nametable 0+1: **match**
-- OAM: **match**
-- CPU RAM game state ($20-$4F): **match**
-- Palette: slight diff (sprite backdrop `00` native vs `0f` emulated)
-- Scroll: native `(0,0)` vs emulated `(16,1)` — **divergence**
-- Mapper regs: native `[124,126,56,57,54,52,24,19]`, emulated **all zeros** (Issue 11)
+### Session 15: Mirroring diagnosis was WRONG
 
-### Root cause: Wrong nametable mirroring (vertical instead of horizontal)
+The "mirroring mismatch" diagnosis from Sessions 12-14 was based on a **bug in the mapper_state TCP command**. The command read `ctrl0 bit 0` (CHR A12 inversion mode from $8000) as mirroring, but actual mirroring is controlled by $A000 and stored in the PPU nametable mapping, not ctrl0.
 
-**Confirmed:** Native has mirroring=2 (vertical), emulated has mirroring=3 (horizontal). Only ONE write to $A000 occurs in the entire native run — at frame 0 during RESET (`$FE5C: LDA #$00; STA $A000` → vertical). The game code that sets horizontal mirroring never executes.
+**Measured (Session 15, corrected):**
+- Native mapper_state.mirror = 2 (vertical) ✓
+- Emulated mapper_state.mirror = 2 (vertical) ✓ (was incorrectly reported as 3)
+- Nametable data IDENTICAL between native and emulated (245 differing bytes between NT0/NT1 in both, NT0==NT2, NT1==NT3)
+- CHR bank registers IDENTICAL between native and emulated
+- Stage select portraits display correctly in native build
 
-**$A000 writes in fixed bank (Ghidra):**
-- `$FE5C`: `LDA #$00; STA $A000` — RESET, sets vertical (EXECUTES)
-- `$C91F`: `LDA #$01; STA $A000` — sets horizontal (NEVER EXECUTES)
-- `$E3AF`: `LDA #$01; STA $A000` — sets horizontal (NEVER EXECUTES)
-- `$E45C`: `LDA #$00; STA $A000` — sets vertical
+**Fix applied:** `extras.c` mapper_state command now calls `nestopia_bridge_get_mirroring()` which reads the actual PPU nametable bank mapping instead of the MMC3 ctrl0 bit.
 
-**Why $C91F never executes:** `func_C910` calls `func_FF21()` (coroutine yield) at `$C917`. The `STA $A000` is at `$C91F`, AFTER the yield. The coroutine scheduler should resume `func_C910` past the yield point, but it appears the resume never happens — either the scheduler never starts this coroutine, or the resume doesn't reach the post-yield code.
+### Session 12 progress (historical)
 
-**MMC3 CHR regs match between native and emulated** — the portrait garbling is caused by wrong mirroring, not wrong CHR banks. With vertical mirroring, the PPU renderer resolves nametable addresses differently, showing tiles from wrong nametable pages.
-
-### Coroutine investigation (Session 10)
-
-`$C910` is NOT a separate coroutine — it's inlined code within `func_C8D0` (the main game coroutine, started at frame 0). The game flow is: `func_C8D0` → setup → yield → setup → falls through to `$C910` → yield at `$C917` → resume → `$C91F: STA $A000` (mirroring).
-
-**Only ONE coroutine_start ever** — at frame 0 with `$C8D0`. 39,023 resumes follow. The coroutine IS being resumed every frame but **never progresses past `S=$B6`**. It yields at the same stack depth on every frame. This means it's stuck in a loop — the game state machine within `func_C8D0` never advances from the intro/title phase into stage select setup.
-
-**Root cause hypothesis:** The coroutine is stuck in a loop at the intro/title screen yield-wait. The game expects some RAM value to change (set by NMI handler or other game logic) to trigger progression, but that value never changes. Alternatively, the game dispatches to bank-switched code that fails (dispatch miss) and the progression branch never fires.
-
-### Next steps
-1. Determine which yield point corresponds to SP=$B6 — trace what code runs between resume and yield
-2. Check if the game gets stuck at a `func_FF21` yield loop that never exits
-3. Look for dispatch misses during the coroutine's yield-resume cycle that might prevent state transitions
+**replace_func removed:** The `replace_func` entries for `$FEAA`/`$FF21` in `game.toml` were the cause of the "game gets stuck" behavior. Removing them lets the codegen handle the scheduler correctly. Title screen and stage select now load. This likely fixed the portrait issue as well.
 
 ---
 
@@ -330,7 +311,7 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 ---
 
 ## General Notes
-- Title screen and stage select working (title correct, portraits garbled — Issue 10)
+- Title screen and stage select working (portraits garbled — Issue 10, CHR timing)
 - Stage entry no longer crashes (Issue 12 fixed temporarily)
 - Coroutine scheduler working via codegen-driven Fibers (Issue 6 fixed, Session 9)
 - Turbo mode runs at ~1500+ fps (Issue 7 fixed)
@@ -338,4 +319,4 @@ These will crash when their code paths are hit. Multi-pass discovery should find
 - Stage background flicker fixed (Issue 9, Session 7)
 - MMC3 8KB dispatch remapping working (Session 9)
 - TCP debug server on port 4372 (native) / 4373 (emulated)
-- Emulated oracle mapper_state returns zeros (Issue 11 — blocking for CHR investigation)
+- Emulated oracle mapper_state fixed (Issue 11, mirroring fixed in Session 15)

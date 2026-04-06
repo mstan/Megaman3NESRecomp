@@ -8,18 +8,6 @@ push_all_jsr = true
 [[inline_dispatch]]
 addr = 0x8023
 
-# Coroutine scheduler and yield — replaced by C implementation in extras.c.
-# The codegen coroutine pattern detection has a push_all_jsr corruption bug
-# (see CONTINUE.md). Using replace_func until the codegen emits a full C
-# scheduler loop instead of patching coroutine_* into the 6502 flow.
-[[replace_func]]
-bank = -1
-addr = 0xFEAA
-
-[[replace_func]]
-bank = -1
-addr = 0xFF21
-
 [[data_region]]
 bank = 11
 start = 0x8023
@@ -2011,6 +1999,10 @@ bank4 = [
     # The valid code at these addresses lives in 8KB bank 9 (second
     # half of 16KB bank 4), which requires 8KB-granularity dispatch
     # support in the recompiler to handle correctly.
+    0xA00C,
+    0xA00F,
+    0xA012,
+    0xA716,
     0xA000,
     0xA003,
     0xA006,
@@ -4050,20 +4042,3 @@ bank29 = [
     0xBED2,
 ]
 
-# Temporary: bank 4 upper-half functions not found by BFS from $A000
-# These are dispatch targets hit during stage entry
-[[extra_func]]
-bank = 4
-addr = 0xA716
-
-[[extra_func]]
-bank = 4
-addr = 0xA00C
-
-[[extra_func]]
-bank = 4
-addr = 0xA00F
-
-[[extra_func]]
-bank = 4
-addr = 0xA012

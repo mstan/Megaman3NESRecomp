@@ -1,0 +1,9 @@
+# Boot -> Title -> Stage Select, NO TURBO for TCP time
+WAIT 400
+HOLD START
+WAIT 3
+RELEASE START
+WAIT 200
+LOG Stage select reached
+WAIT 3600
+EXIT 0

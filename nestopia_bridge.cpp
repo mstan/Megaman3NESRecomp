@@ -272,6 +272,24 @@ void nestopia_bridge_get_cpu_regs(NestopiaCpuRegs *out) {
     out->pc = (uint16_t)mach.cpu.GetPC();
 }
 
+int nestopia_bridge_get_mirroring(void) {
+    if (!s_loaded) return -1;
+    Nes::Api::Emulator &emu = nestopia_get_emulator_instance();
+    Nes::Core::Machine &mach = emu.GetMachine();
+    Nes::Core::Ppu::NmtMem &nmt = mach.ppu.GetNmtMem();
+    /* Read 16 bytes from each of the 4 nametable pages and compare */
+    uint8_t nt[4][16];
+    for (int page = 0; page < 4; page++)
+        for (int i = 0; i < 16; i++)
+            nt[page][i] = nmt.Peek(page * 0x400 + i);
+    int nt0_eq_nt1 = (memcmp(nt[0], nt[1], 16) == 0);
+    int nt0_eq_nt2 = (memcmp(nt[0], nt[2], 16) == 0);
+    if (nt0_eq_nt1 && !nt0_eq_nt2) return 3; /* horizontal */
+    if (nt0_eq_nt2 && !nt0_eq_nt1) return 2; /* vertical */
+    if (nt0_eq_nt1 && nt0_eq_nt2) return 0;  /* single-screen or all same */
+    return -1; /* unknown */
+}
+
 void nestopia_bridge_get_mapper_state(NestopiaMapperState *out) {
     if (!out) return;
     memset(out, 0, sizeof(*out));
