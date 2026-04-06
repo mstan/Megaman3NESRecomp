@@ -1,112 +1,132 @@
-# Mega Man 3 Recomp — Session Handoff
+# Mega Man 3 Recomp — Session 11 Handoff
 
 Read CLAUDE.md first. Follow its debugging protocol EXACTLY.
+Read ISSUES.md for full issue history.
+Read the memory files: `reference_tcp_debug.md`, `feedback_debugging_approach.md`, `feedback_tcp_not_printf.md`.
 
-## Two Active Issues
+## Branch State
 
-### Issue 1: Robot Master Select Screen — Garbled Portraits
+- **master**: Session 10 work committed (Nestopia bridge fix, extra_func, ISSUES.md)
+- **fix/coroutine-resume-codegen**: WIP branch with restore of replace_func scheduler (NOT yet working — coroutine gets stuck)
 
-The stage select screen shows corrupted/mismatched robot master portraits. Names appear correct but the CHR tiles in the portrait frames are wrong — portraits don't match their labels, some are distorted. This is likely an MMC3 CHR banking issue (registers R0-R5 control CHR bank mapping, the wrong 2KB/1KB CHR banks are being loaded for the portrait tiles).
+## Priority 1: Fix Coroutine Scheduler (the real fix)
 
-**Screenshot:** `C:\Users\Matthew\Documents\ShareX\Screenshots\2026-04\MegaMan3Recomp_JiOk9wpcik.png`
+### The Problem
 
-**Investigation approach:**
-1. Launch native + emulated, navigate to stage select (game_mode changes, sub_mode for stage select)
-2. Compare CHR RAM ($0000-$1FFF) between native and emulated at the stage select screen
-3. Compare MMC3 CHR registers (R0-R5) — mapper_state command shows these
-4. If CHR differs, trace which code writes to $8000/$8001 (MMC3 bank select) to find the wrong bank switch
-5. This used to work better — may be a regression from the scheduler changes
+The codegen-driven coroutine system (session 9) has a **push_all_jsr corruption bug** that causes garbled stage select portraits. Root cause chain:
 
-### Issue 2: Stage Entry Crash — Bank 4 Dispatch Misses
+1. Stage select portraits are garbled because nametable mirroring is wrong (vertical instead of horizontal)
+2. The game code at `$C91F` that writes `STA $A000` (horizontal mirroring) is inside `func_C8D0` (main game coroutine) — it never executes because the coroutine is stuck
+3. The coroutine is stuck because the codegen's RESUME path has a bug
 
-Selecting any stage causes the game window to close. The log shows repeated dispatch misses:
+### The Bug (fully diagnosed)
+
+In the 6502 scheduler's RESUME sequence at `$FEE2-$FEF1`:
+
 ```
-$A716 bank=4, $A00C bank=4, $A00F bank=4, $A012 bank=4
-```
-
-These are in the upper 8KB of 16KB bank 4 ($A000-$BFFF range). The MMC3 dispatch remapping correctly translates $8716→$A716, but the functions don't exist in the function list because function_finder's BFS from $A000 doesn't reach them.
-
-**Fix path (in priority order):**
-1. **Temporary:** Add extra_func entries to game.toml for the 4 addresses (gets past crash)
-2. **Permanent:** Implement multi-pass function discovery in function_finder.c (Option B)
-
-**Temporary extra_func (add to game.toml):**
-```toml
-[[extra_func]]
-bank = 4
-addr = 0xA716
-
-[[extra_func]]
-bank = 4
-addr = 0xA00C
-
-[[extra_func]]
-bank = 4
-addr = 0xA00F
-
-[[extra_func]]
-bank = 4
-addr = 0xA012
+$FEE2: LDA $82,X    → restore saved SP
+$FEE4: TAX
+$FEE5: TXS          → SP now points to coroutine's saved stack
+$FEE6: LDA $91      → check channel
+$FEEA: JSR $C545     → *** THIS IS THE BUG ***
+$FEED: PLA / TAY     → pop saved Y
+$FEEF: PLA / TAX     → pop saved X
+$FEF1: RTS           → coroutine_resume()
 ```
 
-**Multi-pass discovery (Option B) — the real fix:**
-1. Pass 1: Walk fixed bank. Every bank-switch + JSR/JMP reveals a (bank, addr) target.
-2. Pass 2: Seed only discovered (bank, addr) pairs and BFS from those.
-3. Result: no blind seeding, no garbage functions from data banks, no missing cross-bank targets.
+The bug: `JSR $C545` at `$FEEA` runs AFTER `TXS` restored the coroutine's stack pointer. With `push_all_jsr = true`, this JSR pushes a 2-byte return address to the 6502 stack — **overwriting the saved Y and X** that `func_FF21` pushed before yielding. The subsequent PLA/PLA at `$FEED/$FEEF` read **corrupted values** (the JSR return address bytes instead of Y/X).
 
-## What Changed in Session 9
+On the real 6502, this works fine because JSR/RTS are balanced — the return address is pushed and then popped by RTS, leaving Y/X intact for the PLAs. But in the recomp with `push_all_jsr`, the return address IS written to `g_ram` at the stack location, physically overwriting the Y/X bytes. Even though `func_C545` returns and S is restored, the bytes in RAM are already corrupted.
 
-### Coroutine Scheduler (root cause fix)
-- **Deleted** 200-line Windows Fiber hack from extras.c
-- **Added** generic coroutine pattern detection to code_generator.c:
-  - `LDX #$FF; TXS` → `coroutine_scheduler_setjmp()` (scheduler loop entry)
-  - `TSX; STX zp,Y; JMP abs` → `coroutine_yield()` (yield pattern)
-  - `JMP (ind)` in scheduler → `coroutine_start()` (START dispatch)
-  - `PLA/TAY/PLA/TAX/RTS` after TXS → `coroutine_resume()` (RESUME dispatch)
-- **Added** `coroutine.c/h` to nesrecomp/runner — Fiber-based runtime (generic, not game-specific)
-- Intro screen runs noticeably faster than old Fiber hack
+### The Proper Universal Fix
 
-### MMC3 8KB Bank Awareness
-- function_finder.c: Seeds both $8000 AND $A000 per bank for mapper 4
-- code_generator.c: Dispatch table remaps addresses via `g_mmc3_r6_odd`/`g_mmc3_r7_even`
-- Removed replace_func entries for $FEAA and $FF21 from game.toml
+**Do NOT inject `coroutine_*` calls into the 6502 scheduler flow.** The 6502 scheduler code was designed for a single CPU where JSR/RTS are atomic. Splitting it across Fibers (scheduler fiber vs coroutine fiber) while keeping `push_all_jsr` breaks the stack invariants.
 
-### Nestopia Oracle Bridge
-- Full state sync: CPU, PPU, VRAM, CHR, palette, OAM from Nestopia internals
-- Fixed game_fill_frame_record corrupting ring buffer frame_number
-- MMC3 mapper state in get_frame/mapper_state TCP commands
-- tools/full_compare.py for systematic divergence comparison
+**Instead:** When the codegen detects the scheduler pattern (`LDX #$FF; TXS` + channel loop + `JMP (ind)` START + `PLA/TAY/PLA/TAX/RTS` RESUME), emit a **single C function** that implements the entire scheduler loop:
+
+```c
+void coroutine_run_scheduler(void) {
+    while (1) {
+        g_cpu.S = 0xFF;
+        // Scan channels...
+        // For START: coroutine_start(channel, addr);
+        // For RESUME: coroutine_resume(channel);
+        // Call func_C545() or equivalent WITHOUT push_all_jsr
+        // Wait for NMI via maybe_trigger_vblank()
+    }
+}
+```
+
+This is what the old extras.c `sched_fiber_proc` did. The codegen should:
+1. Detect the scheduler entry pattern
+2. Analyze the channel table layout (address of state bytes, timer, saved SP)
+3. Identify the per-channel hook call (func_C545 in MM3, might differ per game)
+4. Emit a generic C scheduler loop with Fiber dispatch
+
+The yield function (`func_FF21` pattern: `TSX; STX zp,Y; JMP scheduler`) should:
+1. Save state to channel table (as it does now)
+2. Call `coroutine_yield()` to switch to scheduler fiber
+3. After resume: restore X/Y from 6502 stack, adjust SP, return
+
+### What Was Tried
+
+1. **Restore replace_func for $FEAA/$FF21** (on `fix/coroutine-resume-codegen` branch): The old extras.c scheduler code was restored, but the game gets stuck — coroutine enters RUNNING state and never yields back. This is because other session 9/10 changes (MMC3 8KB remapping, data regions, dispatch table structure) altered the code flow. The old scheduler worked with the pre-session-9 generated code but not with the current regenerated code.
+
+2. **Move PLA/PLA from scheduler to yield function**: Didn't help because the damage from `func_C545`'s JSR push already happened before the RESUME's coroutine_resume() call.
+
+3. **Undo PLA/PLA by restoring SP in RESUME handler**: Didn't fix portraits because the core issue is the coroutine not progressing (mirroring write at $C91F requires the player to select a stage — it's post-stage-select code, not during-stage-select).
+
+### Key Files
+
+| File | What to change |
+|------|---------------|
+| `nesrecomp/recompiler/src/code_generator.c` | Emit full C scheduler loop instead of patching coroutine_* into 6502 flow |
+| `nesrecomp/runner/src/coroutine.c` | May need `coroutine_run_scheduler()` entry point |
+| `nesrecomp/runner/include/coroutine.h` | Update API if needed |
+| `extras.c` | Remove replace_func scheduler once codegen works |
+| `game.toml` | Remove replace_func entries once codegen works |
+
+### Key Addresses (MM3 scheduler)
+
+| Address | What | Pattern |
+|---------|------|---------|
+| `$FEAA` | Scheduler loop entry | `LDX #$FF; TXS` |
+| `$FEDF` | START dispatch | `JMP ($93)` |
+| `$FEEA` | Channel 0 hook | `JSR $C545` (input read) |
+| `$FEF1` | RESUME dispatch | `PLA/TAY/PLA/TAX/RTS` |
+| `$FF21` | Yield function | Pushes X/Y, saves SP, jumps to scheduler |
+| `$FF14` | Channel offset helper | `LDA $91; ASL; ASL; TAX; RTS` |
+| `$80-$8F` | Channel table | 4 bytes/channel × 4 channels |
+| `$90` | Dispatch flag | Set to 0 at loop start |
+| `$91` | Current channel | Channel index (0-3) |
+| `$93/$94` | START address | Low/high byte of coroutine entry |
+
+## Priority 2: Stage Entry (RESOLVED)
+
+4 extra_func entries added for bank 4 ($A716, $A00C, $A00F, $A012). No more dispatch misses at stage select. Permanent fix (multi-pass function discovery) still needed.
+
+## Session 10 Accomplishments
+
+1. **Nestopia bridge mapper state** (Issue 11 FIXED): Real MMC3 registers now exposed via TCP on emulated port 4373
+2. **Stage entry crash** (Issue 12 FIXED): 4 extra_func entries for bank 4
+3. **ISSUES.md cleaned up**: All issues updated, stale entries fixed
+4. **Portrait root cause fully diagnosed**: Mirroring wrong → coroutine stuck → codegen push_all_jsr corruption bug identified
 
 ## Build Commands
 
 ```bash
 CMAKE="/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
 
-# Build recompiler (after code_generator.c or function_finder.c changes)
+# Build recompiler (after code_generator.c changes)
 "$CMAKE" --build nesrecomp/build/recompiler --config Release
 
 # Regenerate game code
 nesrecomp/build/recompiler/Release/NESRecomp.exe "Mega-Man 3 # NES.NES"
 
-# Reconfigure cmake (after adding new source files)
-"$CMAKE" -S . -B build -G "Visual Studio 17 2022" -A x64
-
-# Build game
+# Build game project
 "$CMAKE" --build build --config Release
 ```
 
 ## TCP Ports
 - Native: **4372**
 - Emulated: **4373**
-
-## Key Files
-
-| File | What | Edit? |
-|------|------|-------|
-| `nesrecomp/recompiler/src/function_finder.c` | Function discovery + BFS | Yes — multi-pass needed |
-| `nesrecomp/recompiler/src/code_generator.c` | 6502→C + coroutine patterns + dispatch | Yes |
-| `nesrecomp/runner/src/coroutine.c` | Fiber-based coroutine runtime | Yes if needed |
-| `nesrecomp/runner/src/mapper.c` | MMC3 bank switching + g_current_bank | Check for CHR issue |
-| `extras.c` | Game hooks + TCP commands (scheduler removed) | Minimal |
-| `game.toml` | Recompiler config | Add extra_func temporarily |
-| `tools/full_compare.py` | Oracle comparison | Run after fixes |
