@@ -1,0 +1,13 @@
+TURBO ON
+WAIT 600
+LOG Pressing START at title screen
+HOLD START
+WAIT 5
+RELEASE START
+WAIT 500
+TURBO OFF
+LOG Stage select screen should be visible
+SCREENSHOT C:/temp/chr_trace_stagesel.png
+LOG Holding for TCP queries - connect now
+WAIT 36000
+EXIT

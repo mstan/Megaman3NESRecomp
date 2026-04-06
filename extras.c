@@ -10,6 +10,7 @@
 #include "verify_mode.h"
 #include "recomp_stack.h"
 #include "mapper.h"
+#include "coroutine.h"
 
 #ifdef ENABLE_NESTOPIA_ORACLE
 #include "nestopia_bridge.h"
@@ -21,8 +22,6 @@
 /* ---- External declarations ---- */
 extern void func_FF90(void);
 extern int call_by_address(uint16_t addr);
-extern void func_C545(void);
-extern void func_FF14(void);
 extern void maybe_trigger_vblank(int cycles);
 
 /* ---- Globals expected by the runner framework ---- */
@@ -30,123 +29,6 @@ const char *g_rom_path_for_extras = NULL;
 int         g_watchdog_triggered  = 0;
 uint32_t    g_watchdog_frame      = 0;
 const char *g_watchdog_stack_dump = "";
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-/* ==================================================================
- * Coroutine scheduler — Windows Fiber implementation
- *
- * Each coroutine channel gets its own fiber with its own C stack.
- * The scheduler runs in a dedicated fiber. Yield (func_FF21) switches
- * to the scheduler fiber; resume switches back to the coroutine fiber.
- * This preserves the full C call chain across yield/resume cycles.
- *
- * NOTE: The codegen coroutine pattern detection (coroutine_start/resume/yield)
- * has a known push_all_jsr corruption bug — the scheduler's JSR to func_C545
- * overwrites saved X/Y on the 6502 stack before PLA reads them. This
- * replace_func approach avoids the issue by implementing the scheduler
- * entirely in C without 6502 stack interaction.
- * ================================================================== */
-
-#define SCHED_MAX_CHANNELS 4
-#define FIBER_STACK_SIZE   (1024 * 1024)
-
-static LPVOID s_scheduler_fiber = NULL;
-static LPVOID s_co_fibers[SCHED_MAX_CHANNELS] = {0};
-static int    s_fiber_init = 0;
-static int    s_current_ch = -1;
-static uint16_t s_start_addr = 0;
-
-static void CALLBACK co_fiber_proc(LPVOID param) {
-    int ch = (int)(intptr_t)param;
-    call_by_address(s_start_addr);
-    s_co_fibers[ch] = NULL;
-    SwitchToFiber(s_scheduler_fiber);
-}
-
-static void CALLBACK sched_fiber_proc(LPVOID param) {
-    (void)param;
-    while (1) {
-        g_cpu.S = 0xFF;
-        g_cpu.X = 0x00;
-        g_ram[0x90] = 0x00;
-        g_cpu.Y = 0x04;
-
-        int dispatched = 0;
-        while (g_cpu.Y > 0) {
-            maybe_trigger_vblank(1);
-            uint8_t state = g_ram[0x80 + g_cpu.X];
-            if (state >= 0x04) {
-                if (g_ram[0x90] != 0) { dispatched = -1; break; }
-                g_cpu.Y = (g_cpu.Y - 1) & 0xFF;
-                g_ram[0x91] = g_cpu.Y ^ 0x03;
-                uint8_t old_state = g_ram[0x80 + g_cpu.X];
-                g_ram[0x80 + g_cpu.X] = 0x02;
-                int ch = g_cpu.X >> 2;
-                s_current_ch = ch;
-                if (g_ram[0x91] == 0) func_C545();
-
-                if (old_state == 0x08) {
-                    uint8_t lo = g_ram[0x82 + g_cpu.X];
-                    uint8_t hi = g_ram[0x83 + g_cpu.X];
-                    g_ram[0x93] = lo; g_ram[0x94] = hi;
-                    s_start_addr = (uint16_t)lo | ((uint16_t)hi << 8);
-                    if (s_co_fibers[ch]) { DeleteFiber(s_co_fibers[ch]); s_co_fibers[ch] = NULL; }
-                    s_co_fibers[ch] = CreateFiber(FIBER_STACK_SIZE, co_fiber_proc, (LPVOID)(intptr_t)ch);
-                    SwitchToFiber(s_co_fibers[ch]);
-                } else {
-                    g_cpu.S = g_ram[0x82 + g_cpu.X];
-                    if (s_co_fibers[ch]) SwitchToFiber(s_co_fibers[ch]);
-                }
-                s_current_ch = -1;
-                dispatched = 1;
-                break;
-            }
-            g_cpu.X = (g_cpu.X + 4) & 0xFF;
-            g_cpu.Y = (g_cpu.Y - 1) & 0xFF;
-        }
-        if (!dispatched) maybe_trigger_vblank(1);
-    }
-}
-
-void func_FEAA(void) {
-    if (s_scheduler_fiber) { SwitchToFiber(s_scheduler_fiber); }
-}
-
-void func_FF21(void) {
-    g_cpu.A = 0x01;
-    g_ram[0x93] = g_cpu.A;
-    g_ram[0x100 + g_cpu.S] = g_cpu.X; g_cpu.S--;
-    g_ram[0x100 + g_cpu.S] = g_cpu.Y; g_cpu.S--;
-    g_ram[0x100 + g_cpu.S] = 0xFF; g_cpu.S--;
-    g_ram[0x100 + g_cpu.S] = 0x2B; g_cpu.S--;
-    func_FF14();
-    g_cpu.S += 2;
-    g_cpu.A = g_ram[0x93];
-    g_ram[0x81 + g_cpu.X] = g_cpu.A;
-    g_cpu.A = 0x01;
-    g_ram[0x80 + g_cpu.X] = g_cpu.A;
-    g_cpu.Y = g_cpu.X;
-    g_cpu.X = g_cpu.S;
-    g_ram[(0x82 + g_cpu.Y) & 0xFF] = g_cpu.X;
-    int ch = g_cpu.Y >> 2;
-    if (!s_fiber_init) {
-        s_fiber_init = 1;
-        LPVOID main_fiber = ConvertThreadToFiber(NULL);
-        if (ch >= 0 && ch < SCHED_MAX_CHANNELS) s_co_fibers[ch] = main_fiber;
-        s_scheduler_fiber = CreateFiber(FIBER_STACK_SIZE, sched_fiber_proc, NULL);
-        SwitchToFiber(s_scheduler_fiber);
-    } else {
-        SwitchToFiber(s_scheduler_fiber);
-    }
-    g_cpu.S++;
-    g_cpu.Y = g_ram[0x100 + g_cpu.S];
-    g_cpu.S++;
-    g_cpu.X = g_ram[0x100 + g_cpu.S];
-    g_cpu.S += 2;
-}
 
 /* ==================================================================
  * Runner hook implementations
@@ -358,7 +240,7 @@ int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
                 "\"mmc3_irq_latch\":%d,\"mmc3_irq_counter\":%d,"
                 "\"mmc3_irq_reload\":%d,\"mmc3_irq_enabled\":%d}\n",
                 id, (int)ns.prg[2],  /* current switchable PRG bank */
-                (ns.bank_select & 0x01) ? 3 : 2,  /* mirroring from ctrl0 bit 0 — but actually $A000 controls this */
+                nestopia_bridge_get_mirroring(),  /* actual PPU mirroring: 2=vert, 3=horiz */
                 (int)ns.bank_select,
                 ns.regs[0], ns.regs[1], ns.regs[2], ns.regs[3],
                 ns.regs[4], ns.regs[5], ns.regs[6], ns.regs[7],
@@ -423,6 +305,248 @@ int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
         }
         pos += snprintf(buf + pos, sizeof(buf) - pos, "]}\n");
         debug_server_send_line(buf);
+        return 1;
+    }
+
+    /* coroutine_info — check fiber state + stack dump + counters */
+    if (strcmp(cmd, "coroutine_info") == 0) {
+        uint8_t sp = g_ram[0x82]; /* channel 0 saved SP */
+        char stack_hex[128] = "";
+        int pos = 0;
+        for (int i = 1; i <= 16 && (sp + i) <= 0xFF; i++) {
+            pos += snprintf(stack_hex + pos, sizeof(stack_hex) - pos,
+                "%s%02X", i > 1 ? " " : "", g_ram[0x100 + sp + i]);
+        }
+        int yields = 0, resumes = 0, starts = 0;
+        uint8_t yield_sp = 0, resume_sp = 0;
+        coroutine_get_debug_counters(&yields, &resumes, &starts,
+                                      &yield_sp, &resume_sp);
+        debug_server_send_fmt(
+            "{\"id\":%d,\"active\":%d,"
+            "\"ch0_fiber\":%d,\"ch1_fiber\":%d,"
+            "\"ch2_fiber\":%d,\"ch3_fiber\":%d,"
+            "\"ch0_state\":%d,\"ch0_timer\":%d,"
+            "\"ch0_sp\":\"$%02X\",\"ch0_b83\":\"$%02X\","
+            "\"yields\":%d,\"resumes\":%d,\"starts\":%d,"
+            "\"last_yield_sp\":\"$%02X\",\"last_resume_sp\":\"$%02X\","
+            "\"stack_from_sp\":\"%s\"}\n",
+            id, coroutine_is_active(),
+            coroutine_has_context(0), coroutine_has_context(1),
+            coroutine_has_context(2), coroutine_has_context(3),
+            g_ram[0x80], g_ram[0x81],
+            sp, g_ram[0x83],
+            yields, resumes, starts,
+            yield_sp, resume_sp,
+            stack_hex);
+        return 1;
+    }
+
+    /* mirror_debug — track $A000 mirroring writes */
+    if (strcmp(cmd, "mirror_debug") == 0) {
+        int count = 0;
+        uint8_t last_val = 0;
+        uint64_t last_frame = 0;
+        mapper_get_a000_debug(&count, &last_val, &last_frame);
+        debug_server_send_fmt(
+            "{\"id\":%d,\"a000_writes\":%d,\"last_val\":%d,"
+            "\"last_frame\":%llu,\"current_mirror\":%d}\n",
+            id, count, (int)last_val,
+            (unsigned long long)last_frame,
+            mapper_get_mirroring());
+        return 1;
+    }
+
+    /* a000_trace — dump $A000 write trace ring buffer */
+    if (strcmp(cmd, "a000_trace") == 0) {
+        int count = 0, idx = 0;
+        mapper_get_a000_trace(&count, &idx);
+        const A000TraceEntry *buf = (const A000TraceEntry *)mapper_get_a000_trace_buf();
+        /* Start from oldest entry */
+        int start = (count < 64) ? 0 : idx;
+        debug_server_send_fmt("{\"id\":%d,\"count\":%d,\"entries\":[", id, count);
+        for (int i = 0; i < count; i++) {
+            int ei = (start + i) % 64;
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt(
+                "{\"f\":%llu,\"v\":%d,\"fn\":\"%s\"}",
+                (unsigned long long)buf[ei].frame,
+                (int)buf[ei].val,
+                buf[ei].caller ? buf[ei].caller : "?");
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
+    /* ppu_t_state — query PPU internal t register and derived scroll */
+    if (strcmp(cmd, "ppu_t_state") == 0) {
+        extern uint16_t runtime_get_ppu_t(void);
+        extern uint8_t  runtime_get_ppu_fine_x(void);
+        extern uint16_t g_ppuaddr;
+        uint16_t t = runtime_get_ppu_t();
+        uint8_t fine_x = runtime_get_ppu_fine_x();
+        int coarseX = t & 0x1F;
+        int coarseY = (t >> 5) & 0x1F;
+        int nt_sel = (t >> 10) & 3;
+        int fineY = (t >> 12) & 7;
+        int eff_scroll_x = (coarseX << 3) | (fine_x & 7);
+        int eff_scroll_y = (coarseY << 3) | fineY;
+        debug_server_send_fmt(
+            "{\"id\":%d,\"t\":\"0x%04X\",\"fine_x\":%d,"
+            "\"coarseX\":%d,\"coarseY\":%d,\"nt_sel\":%d,\"fineY\":%d,"
+            "\"eff_scroll_x\":%d,\"eff_scroll_y\":%d,"
+            "\"ppuaddr\":\"0x%04X\","
+            "\"g_scroll_x\":%d,\"g_scroll_y\":%d}\n",
+            id, (int)t, (int)fine_x,
+            coarseX, coarseY, nt_sel, fineY,
+            eff_scroll_x, eff_scroll_y,
+            (int)g_ppuaddr,
+            (int)g_ppuscroll_x, (int)g_ppuscroll_y);
+        return 1;
+    }
+
+    /* last_sync — what runtime_sync_scroll_from_t produced last */
+    if (strcmp(cmd, "last_sync") == 0) {
+        extern void runtime_get_last_sync(uint8_t *sx, uint8_t *sy, uint16_t *t, uint64_t *frame);
+        extern void runtime_get_frame_start_scroll(uint8_t *sx, uint8_t *sy, uint16_t *t, uint64_t *frame);
+        uint8_t sx, sy, fsx, fsy; uint16_t t, ft; uint64_t frame, fframe;
+        runtime_get_last_sync(&sx, &sy, &t, &frame);
+        runtime_get_frame_start_scroll(&fsx, &fsy, &ft, &fframe);
+        debug_server_send_fmt(
+            "{\"id\":%d,"
+            "\"last_sync_x\":%d,\"last_sync_y\":%d,\"last_sync_t\":\"0x%04X\",\"last_sync_f\":%llu,"
+            "\"frame_start_x\":%d,\"frame_start_y\":%d,\"frame_start_t\":\"0x%04X\",\"frame_start_f\":%llu}\n",
+            id, (int)sx, (int)sy, (int)t, (unsigned long long)frame,
+            (int)fsx, (int)fsy, (int)ft, (unsigned long long)fframe);
+        return 1;
+    }
+
+    /* disable_render_irq — toggle IRQ during rendering for debug */
+    if (strcmp(cmd, "disable_render_irq") == 0) {
+        extern int g_disable_render_irq;
+        g_disable_render_irq = !g_disable_render_irq;
+        debug_server_send_fmt("{\"id\":%d,\"disabled\":%d}\n",
+            id, g_disable_render_irq);
+        return 1;
+    }
+
+    /* irq_scanlines — when did IRQs fire during rendering last frame */
+    if (strcmp(cmd, "irq_scanlines") == 0) {
+        extern void runtime_get_irq_scanlines(int *out, int *count, uint64_t *frame);
+        int scanlines[8], count = 0;
+        uint64_t frame = 0;
+        runtime_get_irq_scanlines(scanlines, &count, &frame);
+        debug_server_send_fmt("{\"id\":%d,\"frame\":%llu,\"count\":%d,\"scanlines\":[",
+            id, (unsigned long long)frame, count);
+        for (int i = 0; i < count; i++) {
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt("%d", scanlines[i]);
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
+    /* scroll_trace — dump $2005 write trace ring buffer */
+    if (strcmp(cmd, "scroll_trace") == 0) {
+        extern void runtime_get_scroll_trace(int *out_count, int *out_idx);
+        extern const void *runtime_get_scroll_trace_buf(void);
+        typedef struct { uint64_t frame; uint8_t val; uint8_t which; } STE;
+        int count = 0, idx = 0;
+        runtime_get_scroll_trace(&count, &idx);
+        const STE *buf = (const STE *)runtime_get_scroll_trace_buf();
+        int start = (count < 64) ? 0 : idx;
+        debug_server_send_fmt("{\"id\":%d,\"count\":%d,\"entries\":[", id, count);
+        for (int i = 0; i < count; i++) {
+            int ei = (start + i) % 64;
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt(
+                "{\"f\":%llu,\"v\":%d,\"xy\":\"%s\"}",
+                (unsigned long long)buf[ei].frame,
+                (int)buf[ei].val,
+                buf[ei].which ? "Y" : "X");
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
+    /* chr_trace — dump CHR bank change trace ring buffer */
+    if (strcmp(cmd, "chr_trace") == 0) {
+        int count = 0, idx = 0;
+        mapper_get_chr_trace(&count, &idx);
+        const ChrTraceEntry *buf = (const ChrTraceEntry *)mapper_get_chr_trace_buf();
+        int start = (count < CHR_TRACE_SIZE) ? 0 : idx;
+        debug_server_send_fmt("{\"id\":%d,\"count\":%d,\"entries\":[", id, count);
+        for (int i = 0; i < count; i++) {
+            int ei = (start + i) % CHR_TRACE_SIZE;
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt(
+                "{\"f\":%llu,\"r\":[%d,%d,%d,%d,%d,%d],\"bs\":%d,\"fn\":\"%s\"}",
+                (unsigned long long)buf[ei].frame,
+                (int)buf[ei].regs[0], (int)buf[ei].regs[1], (int)buf[ei].regs[2],
+                (int)buf[ei].regs[3], (int)buf[ei].regs[4], (int)buf[ei].regs[5],
+                (int)buf[ei].bank_select,
+                buf[ei].caller ? buf[ei].caller : "?");
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
+    /* mapper_state — native mode: read from runner's mapper state */
+    if (strcmp(cmd, "mapper_state") == 0) {
+        MapperState ms;
+        mapper_get_state(&ms);
+        debug_server_send_fmt(
+            "{\"id\":%d,\"ok\":true,\"bank\":%d,"
+            "\"type\":%d,\"mirror\":%d,"
+            "\"mmc3_bank_sel\":%d,"
+            "\"mmc3_regs\":[%d,%d,%d,%d,%d,%d,%d,%d],"
+            "\"mmc3_irq_latch\":%d,\"mmc3_irq_counter\":%d,"
+            "\"mmc3_irq_reload\":%d,\"mmc3_irq_enabled\":%d}\n",
+            id, ms.current_bank,
+            ms.mapper_type, ms.mirroring,
+            (int)ms.mmc3_bank_select,
+            ms.mmc3_regs[0], ms.mmc3_regs[1], ms.mmc3_regs[2], ms.mmc3_regs[3],
+            ms.mmc3_regs[4], ms.mmc3_regs[5], ms.mmc3_regs[6], ms.mmc3_regs[7],
+            (int)ms.mmc3_irq_latch, (int)ms.mmc3_irq_counter,
+            ms.mmc3_irq_reload, ms.mmc3_irq_enabled);
+        return 1;
+    }
+
+    /* screenshot — save current framebuffer as PNG */
+    if (strcmp(cmd, "screenshot") == 0) {
+        /* Parse optional "path" from JSON, default to C:/temp/dbg_shot.png */
+        char path[256] = "C:/temp/dbg_shot.png";
+        {
+            const char *p = strstr(json, "\"path\"");
+            if (p) {
+                p += 6;
+                while (*p == ' ' || *p == ':') p++;
+                if (*p == '"') {
+                    p++;
+                    int i = 0;
+                    while (*p && *p != '"' && i < (int)sizeof(path) - 1)
+                        path[i++] = *p++;
+                    path[i] = '\0';
+                }
+            }
+        }
+
+        extern void runner_screenshot(const char *path);
+        extern void runner_save_argb_png(const char *path, const uint32_t *argb, int w, int h);
+
+#ifdef ENABLE_NESTOPIA_ORACLE
+        if (g_run_mode == RUN_MODE_EMULATED) {
+            static uint32_t shot_argb[256 * 240];
+            nestopia_bridge_get_framebuf_argb(shot_argb);
+            runner_save_argb_png(path, shot_argb, 256, 240);
+        } else
+#endif
+        {
+            runner_screenshot(path);
+        }
+
+        debug_server_send_fmt(
+            "{\"id\":%d,\"ok\":true,\"path\":\"%s\",\"frame\":%llu}\n",
+            id, path, (unsigned long long)g_frame_count);
         return 1;
     }
 
