@@ -17,7 +17,11 @@
 #endif
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <SDL.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 /* ---- External declarations ---- */
 extern void func_FF90(void);
@@ -37,9 +41,44 @@ const char *g_watchdog_stack_dump = "";
 uint32_t game_get_expected_crc32(void) { return 0x00000000u; }
 const char *game_get_name(void) { return "Mega Man 3"; }
 
+static void dump_sched_trace_on_exit(void) {
+    FILE *f = fopen("C:/temp/sched_trace_dump.txt", "w");
+    if (!f) return;
+    int count = 0, idx = 0;
+    coroutine_get_sched_trace(&count, &idx);
+    const SchedTraceEntry *buf = coroutine_get_sched_trace_buf();
+    int start = (count < SCHED_TRACE_SIZE) ? 0 : idx;
+    static const char *evt_names[] = {"START", "RESUME", "YIELD"};
+    fprintf(f, "Scheduler trace at exit (frame %llu, %d events):\n",
+            (unsigned long long)g_frame_count, count);
+    fprintf(f, "Channel table: ");
+    for (int ch = 0; ch < 4; ch++) {
+        int x = ch * 4;
+        fprintf(f, "[ch%d: st=%d tm=%d b82=$%02X b83=$%02X] ",
+                ch, g_ram[0x80+x], g_ram[0x81+x], g_ram[0x82+x], g_ram[0x83+x]);
+    }
+    fprintf(f, "\nSP=$%02X I=%d\n", g_cpu.S, g_cpu.I);
+    for (int i = 0; i < count; i++) {
+        int ei = (start + i) % SCHED_TRACE_SIZE;
+        fprintf(f, "  %s ch=%d f=%llu addr=$%04X sp=$%02X\n",
+                evt_names[buf[ei].event_type],
+                buf[ei].channel,
+                (unsigned long long)buf[ei].frame,
+                (int)buf[ei].addr,
+                (int)buf[ei].sp_before);
+    }
+    /* Dump 6502 stack */
+    fprintf(f, "Stack (from SP=$%02X):", g_cpu.S);
+    for (int i = 1; i <= 32 && (g_cpu.S + i) <= 0xFF; i++)
+        fprintf(f, " %02X", g_ram[0x100 + g_cpu.S + i]);
+    fprintf(f, "\n");
+    fclose(f);
+}
+
 void game_on_init(void) {
     int port = (g_run_mode == RUN_MODE_EMULATED) ? 4373 : 4372;
     debug_server_init(port);
+    atexit(dump_sched_trace_on_exit);
 
     if (g_run_mode != RUN_MODE_NATIVE && g_rom_path_for_extras) {
         verify_mode_init(g_rom_path_for_extras);
@@ -181,7 +220,17 @@ void game_run_main(void) {
         func_RESET();
 #endif
     } else {
+#ifdef _WIN32
+        __try {
+            func_RESET();
+        } __except(1) {
+            printf("[CRASH] Exception 0x%08lX at frame %llu\n",
+                   GetExceptionCode(), (unsigned long long)g_frame_count);
+            fflush(stdout);
+        }
+#else
         func_RESET();
+#endif
     }
 }
 
@@ -508,6 +557,41 @@ int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
             ms.mmc3_regs[4], ms.mmc3_regs[5], ms.mmc3_regs[6], ms.mmc3_regs[7],
             (int)ms.mmc3_irq_latch, (int)ms.mmc3_irq_counter,
             ms.mmc3_irq_reload, ms.mmc3_irq_enabled);
+        return 1;
+    }
+
+    /* sched_trace — scheduler event ring buffer */
+    if (strcmp(cmd, "sched_trace") == 0) {
+        int count = 0, idx = 0;
+        coroutine_get_sched_trace(&count, &idx);
+        const SchedTraceEntry *buf = coroutine_get_sched_trace_buf();
+        int start = (count < SCHED_TRACE_SIZE) ? 0 : idx;
+        static const char *evt_names[] = {"START", "RESUME", "YIELD"};
+        debug_server_send_fmt("{\"id\":%d,\"count\":%d,\"current_ch\":%d,\"entries\":[",
+            id, count, coroutine_get_current_channel());
+        for (int i = 0; i < count; i++) {
+            int ei = (start + i) % SCHED_TRACE_SIZE;
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt(
+                "{\"f\":%llu,\"evt\":\"%s\",\"ch\":%d,\"addr\":\"$%04X\",\"sp\":\"$%02X\"}",
+                (unsigned long long)buf[ei].frame,
+                evt_names[buf[ei].event_type],
+                buf[ei].channel,
+                (int)buf[ei].addr,
+                (int)buf[ei].sp_before);
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
+    /* irq_state — current IRQ/interrupt state */
+    if (strcmp(cmd, "irq_state") == 0) {
+        extern int g_disable_render_irq;
+        debug_server_send_fmt(
+            "{\"id\":%d,\"I_flag\":%d,\"disable_render_irq\":%d,"
+            "\"vblank_depth\":%d,\"frame\":%llu}\n",
+            id, (int)g_cpu.I, g_disable_render_irq,
+            runtime_get_vblank_depth(), (unsigned long long)g_frame_count);
         return 1;
     }
 
