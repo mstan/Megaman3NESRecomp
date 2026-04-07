@@ -1,0 +1,34 @@
+# nesrecomp.pin — pins this game's expected nesrecomp version.
+#
+# Two optional fields:
+#   branch = <ref>   ref to resolve when `sha` is unset.
+#                    Default: origin/master
+#   sha    = <sha>   exact commit to pin to. Takes precedence over branch.
+#                    Most explicit / reproducible.
+#
+# Resolution at CMake configure time:
+#   - If `sha` is set (non-empty): expected SHA = that literal value.
+#   - Else: expected SHA = `git rev-parse <branch>` (defaulting to
+#     origin/master if branch is also unset).
+#
+# The configure step then compares the resolved expected SHA against
+# `git rev-parse HEAD` of the nesrecomp checkout (the directory junction
+# at ./nesrecomp → F:/Projects/nesrecomp). Build fails on mismatch with
+# clear instructions on how to align.
+#
+# To roll this game forward to a new nesrecomp commit:
+#   1. update `sha` here (or clear it to track a branch tip)
+#   2. ensure F:/Projects/nesrecomp has fetched/checked out that commit
+#   3. commit this file change
+#
+# NOTE: b033573 is currently a LOCAL-ONLY commit on F:/Projects/nesrecomp.
+# Chain on top of canonical origin/master (812d259):
+#   b033573 ppu_renderer: add g_disable_render_irq toggle for debug IRQ suppression
+#   81b8a47 ppu_renderer: restore t-register frame-start sync + incremental abs_nt_y
+#   f134358 function_finder: split-table dispatch with PHA/PHA fake-return + tolerant scan
+#   27b6031 function_finder: auto-detect split-table JMP(zp) dispatch
+#   812d259 (origin/master tip)
+# When this work lands upstream, re-point this pin to the new origin/master sha.
+
+branch = origin/master
+sha    = b033573d291a824731f748f81b18cdd4f7287b56
