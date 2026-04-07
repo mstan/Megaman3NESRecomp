@@ -1,4 +1,71 @@
-# Mega Man 3 Recomp — Session 20 Handoff
+# Mega Man 3 Recomp — Session 21 Handoff
+
+## Session 20 Summary (2026-04-06)
+
+**Objective:** Eliminate the `$BB34 bank=14` dispatch miss that surfaced in
+longer gameplay (Session 19's remaining open item).
+
+**Result:** Fixed. The miss is gone, 293 additional functions are now
+discovered MM3-wide, and `func_BB34_b14` is generated.
+
+**Root cause:** Same split lo/hi byte tables Session 19 added discovery
+for, but a *variant* of the pattern: bank14 `$804D` stages the pointer
+through ZP, then PHA/PHA-pushes a fake return address, then `JMP (zp)` —
+so the handler RTSes to a fixed continuation point in the dispatcher.
+Session 19's matcher required `STA zp+1` to be **immediately** followed
+by `JMP (zp)`, so this site (and 5 more) was rejected. Even where the
+matcher accepted a site, the per-entry loop broke on the first failure;
+auto-generated `data_region`s often span the lo/hi tables AND a few
+bytes past, swallowing the first handler (e.g. an RTS stub immediately
+following the hi table) and ending the scan at index 0.
+
+**Fix** (`nesrecomp/recompiler/src/function_finder.c`, commit `e8722d0`):
+
+1. Pattern matcher now accepts both shapes after the
+   `LDA abs,Y/X; STA zp; LDA abs,Y/X; STA zp+1` prefix:
+   ```
+   (a) ... 85 z2  6C z1 00                            ; direct
+   (b) ... 85 z2  A9 hi 48 A9 lo 48  6C z1 00         ; PHA/PHA fake-return
+   ```
+2. `is_data_region` is **no longer consulted for table targets** — that
+   gate is meaningful for the table bytes themselves, not what they
+   point to.
+3. Per-entry validation tolerates holes: skip individual failures, cap
+   on 16 consecutive failures or 256 entries (was hard 64-entry
+   break-on-first-failure).
+
+**Verification:** dispatch_miss_last `count=0` after gameplay stress;
+visible behavior change in Snake Man stage (enemies now spawn and
+animate where the recompiled build previously had none).
+
+**Re-checked Issues 8 and 15** with native↔oracle screenshot probes:
+
+- **Issue 8 (cutscene skipped):** still broken, **unaffected** by the
+  Session 20 fix. Zero dispatch misses during the cutscene window — this
+  is logic divergence, not function discovery. Oracle plays the full
+  Snake Man intro f60–f600; native goes black (f0–60) → "READY" (f120) →
+  gameplay (f180), skipping ~10 seconds. Needs sched_state / RAM
+  byte-for-byte comparison at the moment $31 leaves stage select.
+- **Issue 15 (enemies broken):** **partially improved.** Enemies now
+  spawn and animate where Snake Man stage previously had none — the
+  dispatch-discovery side is no longer the limiting factor. CHR tiles
+  are still garbled and collision still missing → remaining root cause
+  is MMC3 CHR bank state (R0–R5), not function discovery.
+
+**New tooling added:**
+- Native↔oracle screenshot probes work in emulated mode now: added
+  `script_wants_screenshot` path to `extras.c` `game_run_main()` so
+  scripted SCREENSHOT commands actually write PNGs from Nestopia's
+  framebuffer (was previously a silent no-op in `--emulated`).
+
+**Side observation (NOT fixed):** Long stress runs crash around frame
+~6200 with the recomp call stack showing `func_8000_b14 → func_E33C →
+func_E16A → ...`. The exit handler reports a non-empty recomp stack but
+the trace is normal NMI mid-flight; the actual symptom is in
+`sched_trace_dump.txt` — channel 0's saved SP drains by 2 bytes per
+yield/resume cycle (e.g. f6174 SP=$D3, f6190 SP=$AF). This is a
+pre-existing leak in the dead-fiber pattern, not introduced by Session
+20, but it now manifests reliably given longer gameplay reach.
 
 ## Session 19 Summary (2026-04-06)
 

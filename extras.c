@@ -172,6 +172,27 @@ void game_run_main(void) {
             if (!g_turbo || (g_frame_count & 15) == 0)
                 runner_present_framebuf(emu_argb);
 
+            /* Script-triggered named screenshot (oracle comparison support).
+             * The native NMI callback writes script screenshots from
+             * s_framebuf, but emulated mode bypasses that callback entirely.
+             * Mirror the same path here using Nestopia's framebuffer. */
+            {
+                char shot_path[256];
+                if (script_wants_screenshot(shot_path, sizeof(shot_path))) {
+                    extern void save_png(const char *path, int w, int h,
+                                         const void *rgb, int stride);
+                    static uint8_t rgb[256 * 240 * 3];
+                    for (int i = 0; i < 256 * 240; i++) {
+                        uint32_t px = emu_argb[i];
+                        rgb[i*3+0] = (px >> 16) & 0xFF;
+                        rgb[i*3+1] = (px >>  8) & 0xFF;
+                        rgb[i*3+2] = (px      ) & 0xFF;
+                    }
+                    save_png(shot_path, 256, 240, rgb, 256*3);
+                    printf("[Shot] %s\n", shot_path);
+                }
+            }
+
             nestopia_bridge_get_ram(g_ram);
             nestopia_bridge_get_sram(g_sram);
 

@@ -159,17 +159,17 @@ The old 200-line Fiber hack was deleted from extras.c.
 
 **Status:** Open. Originally reported in Session 8 as a cutscene background glitch ("master sprite never shows"). After Session 17's MMC3 8KB dispatch fix, the cutscene is no longer just glitched — it doesn't run at all.
 
+**Session 20 re-check (2026-04-06):** Visual probe with side-by-side native vs oracle screenshots at frames 0/30/60/120/240/360/600/720 after pressing A on Snake Man. Oracle plays full intro: portrait sliding in (f60), centered animation (f120), "SNAKE MAN" name card (f240–360), teleport-down (f600), gameplay (f720). Native goes black (f0–60) → "READY" (f120) → gameplay (f180). **Zero dispatch misses** during the cutscene window in native — this is **not** a function-discovery problem and was unaffected by the Session 20 BB34 fix. It's a logic divergence that needs sched_state / RAM byte-for-byte comparison at the moment $31 transitions out of stage select.
+
 **Likely root causes:**
 - A coroutine channel responsible for the cutscene is not being scheduled (scheduler state mismatch)
-- A dispatch miss during cutscene init causes the cutscene routine to bail out
 - The cutscene's coroutine is being terminated prematurely
 
 ### Planned investigation
 1. Compare `sched_state` (channel table) between native and emulated immediately after pressing A on stage select
 2. Check `sched_trace` for cutscene-related coroutine starts/yields
-3. Look for dispatch misses in the stdout log around frame 600-1200 (cutscene window)
-4. Check $31 (game_mode) and $46 (sub_mode) transitions — should hit a "cutscene" value before reaching gameplay (mode 1)
-5. Compare RAM state with emulated oracle at the moment stage select returns
+3. Capture $31 (game_mode) timeline both sides — native skips whatever cutscene mode oracle passes through; identify the missing mode value
+4. Compare RAM state with emulated oracle at the moment stage select returns
 
 ---
 
@@ -417,7 +417,9 @@ further investigation as a separate class of miss. This is the same class of bug
 **When:** During gameplay
 **Symptom:** Enemy sprites appear as **garbled tiles** (wrong CHR data) and have **no collision physics** (Mega Man passes through them without taking damage, and they don't react to bullets).
 
-**Status:** Open. Likely two related sub-issues:
+**Status:** Open, partially improved. Session 20's split-table dispatch fix added 293 handlers including 13 player-state and 112 enemy-related entries from bank14 $804D's table; visual probe at the same gameplay moment shows enemies now spawn and animate where Snake Man stage previously had none. CHR tiles still garbled and collision still broken — confirms the dispatch-discovery side is no longer the limiting factor; remaining issue is CHR bank state, likely the same MMC3 R0–R5 root cause as Issue 9's history.
+
+Likely two related sub-issues:
 
 ### Sub-issue 15a: Enemy CHR tiles wrong
 Enemy sprite CHR pattern data is wrong. Possible causes:
