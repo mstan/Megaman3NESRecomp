@@ -623,6 +623,7 @@ end = 0xDF3A
 
 [functions]
 fixed = [
+    0xD9F0,
     0xC000,
     0xC02F,
     0xC040,
