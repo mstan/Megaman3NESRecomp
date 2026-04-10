@@ -31,4 +31,4 @@
 # When this work lands upstream, re-point this pin to the new origin/master sha.
 
 branch = origin/master
-sha    = b033573d291a824731f748f81b18cdd4f7287b56
+sha    = 6cdfb7dddb9005de8be54b96fb6061b64912cca0

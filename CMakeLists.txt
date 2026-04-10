@@ -76,14 +76,14 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/nesrecomp.pin")
     message(STATUS "nesrecomp pin OK: ${NESRECOMP_EXPECTED_SHA} (${NESRECOMP_PIN_SOURCE})")
 endif()
 
-include(${NESRECOMP_ROOT}/runner/runner.cmake)
-
 # ---- Nestopia Oracle (optional) ----
+# Set BEFORE including runner.cmake so it picks up the bridge sources.
 option(ENABLE_NESTOPIA_ORACLE "Build with Nestopia emulator oracle for verify mode" ON)
-
 if(ENABLE_NESTOPIA_ORACLE)
-    include(${CMAKE_SOURCE_DIR}/nestopia_cmake.cmake)
+    set(NESTOPIA_DIR ${CMAKE_SOURCE_DIR}/nestopia-core)
 endif()
+
+include(${NESRECOMP_ROOT}/runner/runner.cmake)
 
 list(APPEND CMAKE_PREFIX_PATH "${NESRECOMP_ROOT}/runner/external/SDL2/cmake")
 find_package(SDL2 REQUIRED)
@@ -107,15 +107,8 @@ target_include_directories(MegaMan3Recomp PRIVATE
 target_link_libraries(MegaMan3Recomp PRIVATE ${SDL2_LIBRARIES})
 
 if(ENABLE_NESTOPIA_ORACLE)
-    target_sources(MegaMan3Recomp PRIVATE
-        nestopia_bridge.cpp
-    )
     target_link_libraries(MegaMan3Recomp PRIVATE nestopia_core)
     target_compile_definitions(MegaMan3Recomp PRIVATE ENABLE_NESTOPIA_ORACLE)
-    target_include_directories(MegaMan3Recomp PRIVATE
-        ${CMAKE_SOURCE_DIR}/nestopia-core/libretro
-        ${CMAKE_SOURCE_DIR}/nestopia-core/libretro/libretro-common/include
-    )
 endif()
 
 if(WIN32)

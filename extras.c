@@ -289,6 +289,8 @@ void game_fill_frame_record(void *record) {
     d[22] = ms.mmc3_regs[4]; d[23] = ms.mmc3_regs[5];
 }
 
+void game_post_render(uint32_t *framebuf) { (void)framebuf; }
+
 /* ==================================================================
  * TCP debug commands
  * ================================================================== */
