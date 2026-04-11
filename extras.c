@@ -474,6 +474,32 @@ int game_handle_debug_cmd(const char *cmd, int id, const char *json) {
         return 1;
     }
 
+    /* bail_trace — dump bail event ring buffer */
+    if (strcmp(cmd, "bail_trace") == 0) {
+        extern BailTraceEntry g_bail_trace[];
+        extern int g_bail_trace_count;
+        extern int g_bail_trace_idx;
+        int count = g_bail_trace_count;
+        int start = (count < BAIL_TRACE_SIZE) ? 0 : g_bail_trace_idx;
+        debug_server_send_fmt("{\"id\":%d,\"count\":%d,\"entries\":[", id, count);
+        for (int i = 0; i < count; i++) {
+            int ei = (start + i) % BAIL_TRACE_SIZE;
+            BailTraceEntry *e = &g_bail_trace[ei];
+            if (i > 0) debug_server_send_fmt(",");
+            debug_server_send_fmt(
+                "{\"f\":%llu,\"pc\":\"$%04X\",\"exp_sp\":\"$%02X\","
+                "\"act_sp\":\"$%02X\",\"stk_top\":%d,"
+                "\"fn0\":\"%s\",\"fn1\":\"%s\"}",
+                (unsigned long long)e->frame, e->caller_pc,
+                e->expected_sp, e->actual_sp,
+                e->recomp_stack_top,
+                e->recomp_stack_0 ? e->recomp_stack_0 : "?",
+                e->recomp_stack_1 ? e->recomp_stack_1 : "?");
+        }
+        debug_server_send_fmt("]}\n");
+        return 1;
+    }
+
     /* ppu_t_state — query PPU internal t register and derived scroll */
     if (strcmp(cmd, "ppu_t_state") == 0) {
         extern uint16_t runtime_get_ppu_t(void);

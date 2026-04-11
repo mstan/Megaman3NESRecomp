@@ -3,7 +3,7 @@
 # Two optional fields:
 #   branch = <ref>   ref to resolve when `sha` is unset.
 #                    Default: origin/master
-#   sha    = 2b9d0dccb65b7298922d02d6474bdec0e582f911
+#   sha    = 56d85de0895deee300ef4c06817aad7d5abb3ca1
 #                    Most explicit / reproducible.
 #
 # Resolution at CMake configure time:
@@ -22,15 +22,6 @@
 #   1. update `sha` here (or clear it to track a branch tip)
 #   2. re-run the setup script (or manually: git -C nesrecomp checkout <sha>)
 #   3. commit this file change
-#
-# NOTE: b033573 is currently a LOCAL-ONLY commit on F:/Projects/nesrecomp.
-# Chain on top of canonical origin/master (812d259):
-#   b033573 ppu_renderer: add g_disable_render_irq toggle for debug IRQ suppression
-#   81b8a47 ppu_renderer: restore t-register frame-start sync + incremental abs_nt_y
-#   f134358 function_finder: split-table dispatch with PHA/PHA fake-return + tolerant scan
-#   27b6031 function_finder: auto-detect split-table JMP(zp) dispatch
-#   812d259 (origin/master tip)
-# When this work lands upstream, re-point this pin to the new origin/master sha.
 
 branch = origin/master
-sha    = 2b9d0dccb65b7298922d02d6474bdec0e582f911
+sha    = 56d85de0895deee300ef4c06817aad7d5abb3ca1
