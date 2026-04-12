@@ -24,9 +24,7 @@
 #endif
 
 /* ---- External declarations ---- */
-extern void func_FF90(void);
 extern int call_by_address(uint16_t addr);
-extern void maybe_trigger_vblank(int cycles);
 
 /* ---- Globals expected by the runner framework ---- */
 const char *g_rom_path_for_extras = NULL;
@@ -108,18 +106,14 @@ const char *game_arg_usage(void) {
 
 void game_run_nmi(void) {
     verify_mode_run_nmi();
+    if (g_run_mode != RUN_MODE_NATIVE) return;
 
-    /* MM3's NMI handler at $C000 hijacks the RTI return address on the 6502
-     * stack, replacing it with $C121 — a trampoline that calls func_FF90
-     * (bank-switch dispatch / sound engine).
-     *
-     * DISABLED: The game's own code (scheduler coroutines) already calls
-     * func_FF90 during normal execution. Calling it again from NMI causes
-     * unbounded C stack growth: func_FF90 runs the sound engine which takes
-     * many cycles, triggering another VBlank mid-execution, which calls
-     * game_run_nmi → func_FF90 recursively. On real NES this can't happen
-     * because NMI is edge-triggered (once per frame). The sound engine
-     * doesn't work yet anyway (Issue 4 — jump_local_ptr unsupported). */
+    /* Call the actual NMI handler (func_C000) directly.
+     * The runner (main_runner.c) has already pushed PCH/PCL/P to the 6502
+     * stack before calling us, and will restore S afterward.
+     * func_C000 does its own PHA/TXA+PHA/TYA+PHA at entry. */
+    extern void func_C000(void);
+    func_C000();
 }
 
 void game_run_main(void) {
