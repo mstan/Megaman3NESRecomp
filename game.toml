@@ -4,6 +4,7 @@
 [game]
 output_prefix = "mega-man-3"
 push_all_jsr = true
+symbol_file = "symbols.sym"
 
 [[inline_dispatch]]
 addr = 0x8023

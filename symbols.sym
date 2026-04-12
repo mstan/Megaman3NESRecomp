@@ -1,0 +1,258 @@
+# Mega Man 3 Symbol Table
+# Source: github.com/refreshing-lemonade/megaman3-disassembly
+# Format: HEXADDR SymbolName
+
+# ============================================================
+# Fixed Bank ($C000-$FFFF) — bank 1E/1F, always mapped
+# ============================================================
+
+C000 NMI
+C121 PostNMI_Trampoline
+C143 IRQ
+CC18 handle_checkpoint
+CD9A player_state_ptr_lo
+CDB0 player_state_ptr_hi
+CE36 player_on_ground
+D0DA weapon_fire
+D103 init_weapon
+D1A6 init_rush
+D1FB init_needle_cannon
+D212 init_gemini_laser
+D24D init_hard_knuckle
+D29F init_top_spin
+D2B4 init_search_snake
+D2D3 init_shadow_blade
+D303 weapon_init_ptr_lo
+D30F weapon_init_ptr_hi
+D31B weapon_x_offset
+D323 weapon_OAM_ID
+D32F weapon_main_ID
+D33D weapon_max_shots
+D349 weapon_fire_sound
+DECE decrease_ammo
+DF1B weapon_cost
+DF27 weapon_framerate
+F71D move_sprite_right
+F73B move_sprite_left
+F759 move_sprite_down
+F779 move_sprite_up
+F81B reset_gravity
+F835 reset_sprite_anim
+F869 face_player
+F898 submit_sound_ID_D9
+F89A submit_sound_ID
+FAE2 check_player_collision
+FB3B hitbox_mega_man_heights
+FB5B hitbox_mega_man_widths
+FB7B check_sprite_weapon_collision
+FBD2 check_weapon_collision
+FC03 hitbox_weapon_heights
+FC23 hitbox_weapon_widths
+FC43 find_enemy_freeslot_x
+FC53 find_enemy_freeslot_y
+FE00 RESET
+FEAA scheduler_restart
+FF16 scheduler_yield
+FF21 scheduler_resume
+FF3C update_CHR_banks
+FF41 select_CHR_banks
+FF6B select_PRG_banks
+FF90 play_sounds
+
+# ============================================================
+# Enemy Data Tables — bank 00
+# ============================================================
+
+A000 enemy_flags_g
+A100 enemy_main_ID_g
+A200 enemy_shape_g
+A300 enemy_OAM_ID_g
+A400 enemy_health_g
+A500 enemy_speed_ID_g
+A600 enemy_x_velocity_sub_g
+A700 enemy_x_velocity_g
+
+# ============================================================
+# Doc Robot AI — bank 04
+# ============================================================
+
+A000 main_doc_flash_j
+A003 main_doc_wood_j
+A006 main_doc_crash_j
+A009 main_doc_metal_j
+
+# ============================================================
+# Doc Robot AI — bank 05
+# ============================================================
+
+A000 main_doc_bubble_j
+A003 main_doc_heat_j
+A006 main_doc_quick_j
+A009 main_doc_air_j
+
+# ============================================================
+# Robot Master AI — bank 06
+# ============================================================
+
+A000 main_needle_man_j
+A003 main_magnet_man_j
+A006 main_top_man_j
+A009 main_shadow_man_j
+A01C main_needle_man
+A02F needle_man_state_ptr_lo
+A034 needle_man_state_ptr_hi
+A039 needle_man_init
+A04D needle_man_wait_B
+A068 needle_man_throw
+A0F4 needle_man_jump_player
+A150 needle_man_headbutt
+A188 needle_man_setup_throw
+A19E needle_man_throw_vel_y_sub
+A1A0 needle_man_throw_vel_y
+A1A2 needle_man_setup_jump
+A1C8 needle_man_jump_vel_x_sub
+A1D0 needle_man_jump_vel_x
+A1D8 needle_man_jump_states
+A1E0 spawn_needle
+A836 test_facing_change
+
+# ============================================================
+# Robot Master AI — bank 07
+# ============================================================
+
+A000 main_hard_man_j
+A006 main_spark_man_j
+A00C main_snake_man_j
+A012 main_gemini_man_j
+A6B2 main_gemini_man
+
+# ============================================================
+# Damage Tables — bank 0A
+# ============================================================
+
+A100 buster_damage_table
+A200 needle_damage_table
+A300 magnet_damage_table
+A400 gemini_damage_table
+A500 hard_knuckle_damage_table
+A600 top_spin_damage_table
+A700 snake_damage_table
+A800 spark_damage_table
+A900 shadow_damage_table
+
+# ============================================================
+# Wily Stage Bosses — bank 12
+# ============================================================
+
+A000 main_yellow_devil
+A009 main_wily_machine_A
+A00F main_wily_machine_B
+A015 main_gamma_B
+A01E main_gamma_F
+A021 main_teleporter
+A027 main_wily_machine_C
+A030 main_kamegoro_maker
+A039 main_kamegoro_current
+A03F main_holograph
+A054 main_giant_met
+
+# ============================================================
+# Sound Engine — bank 16
+# ============================================================
+
+8023 jump_local_ptr
+803A read_ptr
+8106 play_sound_ID
+
+# ============================================================
+# Enemy Spawning — bank 1A/1B
+# ============================================================
+
+9C00 check_new_enemies
+9C80 spawn_enemy
+
+# ============================================================
+# Sprite/Enemy Main Routines — bank 1C/1D
+# ============================================================
+
+8000 process_sprites_j
+800C process_sprites
+8097 check_player_hit
+8102 check_weapon_hit
+83AF weapon_damage_ptr_lo
+83BB weapon_damage_ptr_hi
+83C7 sprite_main_ptr_lo
+84C7 sprite_main_ptr_hi
+85C7 main_ret_A
+85C8 main_ret_B
+85C9 main_unknown_1B
+87DD main_magnet_missile
+8888 main_gemini_laser
+8947 main_hard_knuckle
+89C2 main_search_snake
+8A79 main_spark_shock
+8A98 main_shadow_blade
+8AFB main_dada
+8B58 main_potton
+8BFD main_hammer_joe
+8CD3 main_bubukan
+8DCB main_jamacy
+8E14 main_bomb_flier_penpen
+8F8A main_cloud_platform
+9096 main_unknown_14
+90E2 main_unknown_0C
+9194 main_giant_springer
+92B6 main_chibee
+945F main_electric_gabyoall
+952F main_junk_block
+95E4 main_petit_snakey
+96C5 main_yambow
+9783 main_met
+9885 main_pole
+98B3 main_cannon
+99C3 main_metall_dx
+9ABB main_mag_fly
+9B44 main_junk_golem
+9C19 main_unknown_24
+9C56 main_pickelman_bull
+9D31 main_bikky
+9D84 main_magnet_force
+9DB4 main_new_shotman
+9FF7 main_proto_man
+A1E2 main_proto_man_gemini_cutscene
+A2EC main_hari_harry
+A498 main_nitron
+A63A main_unknown_27
+A66B main_gyoraibo
+A7CB main_penpen_maker
+AA0A main_bomber_pepe
+AB5B main_bolton_and_nutton
+AD09 main_have_su_bee
+AE28 main_beehive
+AEB4 bee_spawn_x_offset
+AEBE bee_spawn_y_offset
+AEC3 main_returning_monking
+AFD7 main_wanaan
+B07F main_komasaburo
+B1BD main_mechakkero
+B23E main_top_man_platform
+B2FE main_needle_press
+B352 main_elecn
+B47C main_peterchy
+B4C4 main_walking_bomb
+B540 main_hologran
+B5CC main_parasyu
+B6E8 main_doc_robot_intro
+B7FB doc_robot_master_main_indices
+B853 main_robot_master_intro
+B8C7 robot_master_main_indices
+B8F8 main_spinning_wheel
+B931 main_trap_platform
+B9AC main_breakable_wall
+B9E5 main_spark_falling_platform
+BA6C main_big_snakey
+BB55 init_tama
+BBBE main_tama_A
+BCA8 main_tama_B
+BDF9 main_item_pickup
+BED2 main_surprise_box
