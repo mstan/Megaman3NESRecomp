@@ -5,6 +5,8 @@ extern int g_current_bank;
 int call_by_address(uint16_t addr) {
     if (addr < 0x8000) { nes_log_dispatch_miss(addr); return 0; }
     extern int g_mmc3_r6_odd, g_mmc3_r7_even;
+    /* TODO: For $A000-$BFFF, the correct bank is g_mmc3_bank_a000 (R7/2).
+     * Blocked on Issue 8 — see DIVERGENCE.md Divergence 3/4. */
     if (g_mmc3_r6_odd && addr >= 0x8000 && addr < 0xA000)
         addr += 0x2000; /* 8KB bank odd: $8000 range -> $A000 offset */
     else if (g_mmc3_r7_even && addr >= 0xA000 && addr < 0xC000)
