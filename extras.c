@@ -122,7 +122,9 @@ void game_run_nmi(void) {
      * (sound engine via func_FF90, register restore, and return to the
      * interrupted code). */
     extern void func_C000(void);
+    extern void func_C121(void);
     func_C000();
+    func_C121();
 }
 
 void game_run_main(void) {
