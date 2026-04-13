@@ -6,6 +6,14 @@ output_prefix = "mega-man-3"
 push_all_jsr = true
 symbol_file = "symbols.sym"
 
+# Bank-switching trampoline at $938B in bank 12 (bank18.asm).
+# Called from $A048 in the intro code path. Missed by function finder
+# because $938B is not a JSR target within bank 12 — it's called cross-bank
+# from the $A000 range which lives in a different 8KB bank (R7).
+[[extra_func]]
+addr = 0x938B
+bank = 12
+
 [[inline_dispatch]]
 addr = 0x8023
 
