@@ -32,6 +32,7 @@ int         g_watchdog_triggered  = 0;
 uint32_t    g_watchdog_frame      = 0;
 const char *g_watchdog_stack_dump = "";
 
+
 /* ==================================================================
  * Runner hook implementations
  * ================================================================== */
@@ -111,7 +112,15 @@ void game_run_nmi(void) {
     /* Call the actual NMI handler (func_C000) directly.
      * The runner (main_runner.c) has already pushed PCH/PCL/P to the 6502
      * stack before calling us, and will restore S afterward.
-     * func_C000 does its own PHA/TXA+PHA/TYA+PHA at entry. */
+     * func_C000 does its own PHA/TXA+PHA/TYA+PHA at entry.
+     *
+     * MM3's NMI handler hijacks its RTI return address: it saves the
+     * original return PC to $7C/$7D, then overwrites the stack with
+     * $C121 (PostNMI_Trampoline). On real hardware, RTI pops this and
+     * jumps to $C121. In the recomp, func_C000() just returns to us,
+     * so we must explicitly call func_C121 to run the post-NMI chain
+     * (sound engine via func_FF90, register restore, and return to the
+     * interrupted code). */
     extern void func_C000(void);
     func_C000();
 }
