@@ -554,6 +554,16 @@ _dispatch_retry:
             func_FF43(); break;
         case 0xFF56:
             func_FF56(); break;
+        case 0xC121:
+            func_C121(); break;
+        case 0xC140:
+            func_C140(); break;
+        case 0xC141:
+            func_C141(); break;
+        case 0xC123:
+            func_C123(); break;
+        case 0xC126:
+            func_C126(); break;
         case 0x8003:
             switch (_bank) {
                 case 15: func_C003(); break;
@@ -816,6 +826,8 @@ _dispatch_retry:
             func_FF17(); break;
         case 0xFF18:
             func_FF18(); break;
+        case 0xFF90:
+            func_FF90(); break;
         case 0x8002:
             func_8002_b0(); break;
         case 0xA18E:
@@ -6299,8 +6311,6 @@ _dispatch_retry:
             func_E97C(); break;
         case 0xE97E:
             func_E97E(); break;
-        case 0xFF90:
-            func_FF90(); break;
         case 0xFF91:
             func_FF91(); break;
         case 0xF00B:
@@ -7037,8 +7047,6 @@ _dispatch_retry:
             func_D67E(); break;
         case 0xD69D:
             func_D69D(); break;
-        case 0xC121:
-            func_C121(); break;
         case 0xD0C1:
             func_D0C1(); break;
         case 0xD0C9:
@@ -7767,10 +7775,6 @@ _dispatch_retry:
             func_EB16(); break;
         case 0xDE15:
             func_DE15(); break;
-        case 0xC140:
-            func_C140(); break;
-        case 0xC141:
-            func_C141(); break;
         case 0xE652:
             func_E652(); break;
         case 0xD5C6:
@@ -9193,8 +9197,6 @@ _dispatch_retry:
             func_C9B6(); break;
         case 0xC80D:
             func_C80D(); break;
-        case 0xC123:
-            func_C123(); break;
         case 0xFE0F:
             func_FE0F(); break;
         case 0xFFB2:
@@ -9337,8 +9339,6 @@ _dispatch_retry:
             func_C474(); break;
         case 0xC206:
             func_C206(); break;
-        case 0xC126:
-            func_C126(); break;
         case 0xCAA5:
             func_CAA5(); break;
         case 0xC885:
