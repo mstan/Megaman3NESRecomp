@@ -106,24 +106,142 @@ const char *game_arg_usage(void) {
 }
 
 void game_run_nmi(void) {
+    /* INSTRUMENTATION: sample native S + oracle SP BEFORE any NMI work runs.
+     * Must be above verify_mode_run_nmi() because verify drives func_NMI
+     * internally and we want s_pre_nmi (pre-NMI main-loop S). */
+    {
+        static FILE *s_pre_log = NULL;
+        static int   s_pre_log_lines = 0;
+        if (s_pre_log_lines < 8000) {
+            if (!s_pre_log) s_pre_log = fopen("C:/temp/nmi_pre_sp.log", "w");
+            if (s_pre_log &&
+                ((g_frame_count < 300) || ((g_frame_count % 30) == 0))) {
+                int oracle_sp = -1, oracle_pc = -1;
+#ifdef ENABLE_NESTOPIA_ORACLE
+                if (nestopia_bridge_is_loaded()) {
+                    NestopiaCpuRegs _r;
+                    nestopia_bridge_get_cpu_regs(&_r);
+                    oracle_sp = _r.sp;
+                    oracle_pc = _r.pc;
+                }
+#endif
+                fprintf(s_pre_log,
+                    "f=%llu mode=$%02X nat_S=$%02X oracle_sp=$%02X "
+                    "oracle_pc=$%04X delta=%+d\n",
+                    (unsigned long long)g_frame_count, g_ram[0x46],
+                    g_cpu.S, oracle_sp & 0xFF, oracle_pc & 0xFFFF,
+                    (oracle_sp >= 0) ? (int)((int8_t)(oracle_sp - g_cpu.S))
+                                     : 0);
+                fflush(s_pre_log);
+                s_pre_log_lines++;
+            }
+        }
+    }
+
     verify_mode_run_nmi();
     if (g_run_mode != RUN_MODE_NATIVE) return;
 
-    /* Call the actual NMI handler (func_C000) directly.
-     * The runner (main_runner.c) has already pushed PCH/PCL/P to the 6502
-     * stack before calling us, and will restore S afterward.
-     * func_C000 does its own PHA/TXA+PHA/TYA+PHA at entry.
-     *
-     * MM3's NMI handler hijacks its RTI return address: it saves the
+    /* MM3's NMI handler hijacks its RTI return address: it saves the
      * original return PC to $7C/$7D, then overwrites the stack with
      * $C121 (PostNMI_Trampoline). On real hardware, RTI pops this and
-     * jumps to $C121. In the recomp, func_C000() just returns to us,
-     * so we must explicitly call func_C121 to run the post-NMI chain
+     * jumps to $C121. In the recomp, func_NMI() (== func_C000()) just
+     * returns, so we explicitly call func_C121 to run the post-NMI chain
      * (sound engine via func_FF90, register restore, and return to the
-     * interrupted code). */
-    extern void func_C000(void);
+     * interrupted code).
+     *
+     * NOTE: func_C000 must NOT be called here — verify_mode_run_nmi()
+     * already invoked it via func_NMI() above. Calling it a second time
+     * double-pops the stack by 3 bytes per frame, shifting S so that
+     * C121's STA $0105,X writes land in shadow OAM ($0200-$0203),
+     * corrupting sprite tiles (e.g. the title cursor). */
     extern void func_C121(void);
-    func_C000();
+
+    /* INSTRUMENTATION: log S and vblank depth at entry to each handler,
+     * so we can correlate low-S writes at $C12F/$C136 ($0105,X / $0106,X)
+     * with stack pressure across depth=1 vs depth=2. Appends one line per
+     * NMI entry to C:/temp/nmi_s_trace.log. Cap at 500 lines so we don't
+     * balloon the file across long runs. */
+    {
+        static FILE *s_nmi_log = NULL;
+        static uint64_t s_last_logged_mode = 0xFFFFFFFF;
+        static int      s_nmi_log_lines = 0;
+        /* Log every frame for mode changes + first 10 of each mode;
+         * otherwise one every 30 frames to capture title + beyond without
+         * flooding. */
+        uint8_t cur_mode = g_ram[0x46];
+        int should_log =
+            (s_nmi_log_lines < 8000) &&
+            ((cur_mode != s_last_logged_mode) ||
+             ((g_frame_count % 30) == 0) ||
+             (g_frame_count < 300));
+        if (!s_nmi_log) s_nmi_log = fopen("C:/temp/nmi_s_trace.log", "w");
+        if (s_nmi_log && should_log) {
+            extern int coroutine_get_current_channel(void);
+            int ch = coroutine_get_current_channel();
+            uint8_t s_c000 = g_cpu.S;
+            int     d_c000 = runtime_get_vblank_depth();
+            /* Oracle SP comparison: in verify mode, Nestopia has just
+             * completed the PREVIOUS frame's retro_run (see verify_mode.c)
+             * so mach.cpu.sp reflects post-NMI-return state ≈ main-loop S
+             * about to be interrupted by the NEXT NMI. That's exactly the
+             * sample we want to compare against `s_pre_nmi` in native. */
+            int oracle_sp = -1, oracle_pc = -1;
+#ifdef ENABLE_NESTOPIA_ORACLE
+            if (nestopia_bridge_is_loaded()) {
+                NestopiaCpuRegs _r;
+                nestopia_bridge_get_cpu_regs(&_r);
+                oracle_sp = _r.sp;
+                oracle_pc = _r.pc;
+            }
+#endif
+            /* Show stack contents around S: 4 bytes ABOVE S (most recent
+             * pushes) and 4 bytes BELOW S (next free slots). Since S points
+             * at NEXT free slot, $0100+S+1 is the top of used stack. */
+            fprintf(s_nmi_log,
+                "f=%llu mode=$%02X ch=%d C000 S=$%02X depth=%d ctrl=$%02X "
+                "oracle_sp=$%02X oracle_pc=$%04X "
+                "top4=[%02X %02X %02X %02X] next4=[%02X %02X %02X %02X]\n",
+                (unsigned long long)g_frame_count,
+                cur_mode, ch, s_c000, d_c000, g_ppuctrl,
+                oracle_sp & 0xFF, oracle_pc & 0xFFFF,
+                g_ram[0x100 + ((uint8_t)(s_c000+1))],
+                g_ram[0x100 + ((uint8_t)(s_c000+2))],
+                g_ram[0x100 + ((uint8_t)(s_c000+3))],
+                g_ram[0x100 + ((uint8_t)(s_c000+4))],
+                g_ram[0x100 + ((uint8_t)(s_c000  ))],
+                g_ram[0x100 + ((uint8_t)(s_c000-1))],
+                g_ram[0x100 + ((uint8_t)(s_c000-2))],
+                g_ram[0x100 + ((uint8_t)(s_c000-3))]);
+            fflush(s_nmi_log);
+            s_nmi_log_lines++;
+            s_last_logged_mode = cur_mode;
+
+            /* NOTE: func_C000 intentionally NOT called here — see comment
+             * above. verify_mode_run_nmi() already ran it. */
+            uint8_t s_c121 = g_cpu.S;
+            fprintf(s_nmi_log,
+                "f=%llu                 C121 S=$%02X depth=%d "
+                "(C000_delta=%+d)\n",
+                (unsigned long long)g_frame_count,
+                s_c121, runtime_get_vblank_depth(),
+                (int)((int8_t)(s_c121 - s_c000)));
+            fflush(s_nmi_log);
+            s_nmi_log_lines++;
+
+            func_C121();
+
+            uint8_t s_exit = g_cpu.S;
+            fprintf(s_nmi_log,
+                "f=%llu                 EXIT S=$%02X depth=%d "
+                "(C121_delta=%+d)\n",
+                (unsigned long long)g_frame_count,
+                s_exit, runtime_get_vblank_depth(),
+                (int)((int8_t)(s_exit - s_c121)));
+            fflush(s_nmi_log);
+            s_nmi_log_lines++;
+            return;
+        }
+    }
     func_C121();
 }
 
