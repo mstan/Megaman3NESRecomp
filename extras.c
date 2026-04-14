@@ -107,23 +107,11 @@ const char *game_arg_usage(void) {
 
 void game_run_nmi(void) {
     verify_mode_run_nmi();
-    if (g_run_mode != RUN_MODE_NATIVE) return;
-
-    /* MM3's NMI handler hijacks its RTI return address: it saves the
-     * original return PC to $7C/$7D, then overwrites the stack with
-     * $C121 (PostNMI_Trampoline). On real hardware, RTI pops this and
-     * jumps to $C121. In the recomp, func_NMI() (== func_C000()) just
-     * returns, so we explicitly call func_C121 to run the post-NMI chain
-     * (sound engine via func_FF90, register restore, and return to the
-     * interrupted code).
-     *
-     * NOTE: func_C000 must NOT be called here — verify_mode_run_nmi()
-     * already invoked it via func_NMI() above. Calling it a second time
-     * double-pops the stack by 3 bytes per frame, shifting S so that
-     * C121's STA $0105,X writes land in shadow OAM ($0200-$0203),
-     * corrupting sprite tiles (e.g. the title cursor). */
-    extern void func_C121(void);
-    func_C121();
+    /* MM3's NMI handler ($C000) hijacks its RTI return by overwriting the
+     * hardware-pushed PC on the stack with $C121 (PostNMI trampoline running
+     * the sound engine). nesrecomp codegen now detects this RTI-hijack
+     * pattern and emits call_by_address(target) at the RTI — no game-side
+     * wiring is needed. */
 }
 
 void game_run_main(void) {
