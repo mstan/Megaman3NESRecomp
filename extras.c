@@ -123,6 +123,20 @@ void game_run_nmi(void) {
      * interrupted code). */
     extern void func_C000(void);
     extern void func_C121(void);
+    /* On real NES, the NMI fires exactly once per frame and never
+     * re-enters.  Nested NMIs (depth > 1) are an artifact of the
+     * recompiler's cycle-based timing.  Running the full NMI handler
+     * again causes side effects: the PostNMI chain's sprite/object
+     * management corrupts shadow OAM, and re-running DMA/VRAM transfer
+     * at the wrong time produces visual glitches.
+     *
+     * At depth > 1 the only thing the game needs is $1A set (so the
+     * scheduler's spin-wait can exit).  The NMI handler sets $1A at
+     * $C04F, but we can just set it directly and skip the handler. */
+    if (runtime_get_vblank_depth() > 1) {
+        g_ram[0x1A] = 1;
+        return;
+    }
     func_C000();
     func_C121();
 }
