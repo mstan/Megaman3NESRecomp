@@ -14,6 +14,15 @@ symbol_file = "symbols.sym"
 addr = 0x938B
 bank = 12
 
+# Boss-clear / teleport-out handler at $DBE1 in bank 13, dispatched via
+# cross-bank JSR during boss-defeat sequence. Surfaced by [Dispatch] MISS
+# log at runtime (frame 28155, Snake Man clear). Missed for the same reason
+# as $938B — cross-bank reachability the finder walk doesn't resolve.
+# TODO(finder): cross-bank JSR resolution would make this unnecessary.
+[[extra_func]]
+addr = 0xDBE1
+bank = 13
+
 [[inline_dispatch]]
 addr = 0x8023
 
