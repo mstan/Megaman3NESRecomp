@@ -5,6 +5,7 @@ build/
 *.sav
 *.log
 *.zip
+*.csv
 .mcp.json
 debug.ini
 *.cdl

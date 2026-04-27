@@ -1,31 +1,31 @@
-# MegaMan3Recomp
+# Megaman3NESRecomp
 
 Static recompilation of Mega Man 3 (NES) for native PC.
 Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
-> **Status: Early — title screen and menus work.** 8,083 functions recompiled with zero dispatch misses. Stage loading and gameplay have known issues (see ISSUES.md).
-
-## Acknowledgments
-
-Function coverage assisted by the [megaman3-disassembly](https://github.com/example/megaman3-disassembly) community disassembly, providing 2,889 named function entry points.
+> **Status: Work in progress.** Title screen, robot master select, and basic stage gameplay are functional. Boss fights, passwords, and special weapons are untested and may softlock. Visual gaps are expected. If you find a bug, please open an issue.
 
 ## What Works
 
-- Capcom copyright splash screen
 - Title screen with animated logo
-- Menu navigation (GAME START / PASS WORD selection)
-- Password entry screen
+- Main menu (GAME START / PASS WORD selection)
+- Robot master stage select screen and navigation
+- Loading into stages with background scrolling and basic enemies
+- Player movement, jumping, and the Mega Buster
 
-## Known Issues
+## Known Limitations
 
-- Stage loading results in Mega Man stuck at top of screen
-- See [ISSUES.md](ISSUES.md) for full details
+- **Boss fights** are untested and likely to stall or softlock
+- **Special weapons** are untested
+- **Passwords** are untested
+- **Visual elements** may have minor glitches or missing sprites in some areas
+- Audio is basic (APU register writes are captured but full audio mixing is work-in-progress)
 
 ## Quick Start
 
-1. Build from source (see below)
-2. Run `MegaMan3Recomp.exe`
-3. Select your Mega Man 3 (USA) ROM when prompted
+1. Download the latest release from [Releases](../../releases)
+2. Extract and run `MegaMan3Recomp.exe`
+3. Select your Mega Man 3 (USA) ROM when prompted — the path is saved for future launches
 
 ## Controls
 
@@ -48,8 +48,8 @@ Function coverage assisted by the [megaman3-disassembly](https://github.com/exam
 Requires Visual Studio 2022 and CMake 3.20+.
 
 ```bash
-git clone https://github.com/mstan/MegaMan3Recomp
-cd MegaMan3Recomp
+git clone https://github.com/mstan/Megaman3NESRecomp
+cd Megaman3NESRecomp
 
 # Windows
 setup.bat
@@ -68,10 +68,15 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
+Place your Mega Man 3 (USA) ROM in the build directory or select it at runtime.
+
 ## Architecture
 
-This is a **static recompiler**, not an emulator. The 6502 machine code from the original ROM is translated to C, then compiled to native x64. At runtime, the game requires the original ROM for data (graphics, levels, audio samples) but all code execution is native.
+This is a **static recompiler**, not an emulator. The original 6502 machine code is translated to C at build time, then compiled to native x64. The NES PPU, APU, and mapper are simulated by the runner library.
 
 - **Mapper**: MMC3 (Mapper 4) with PRG/CHR bank switching and scanline IRQ
 - **Framework**: [nesrecomp](https://github.com/mstan/nesrecomp) — shared across multiple NES recomp projects
-- **Renderer**: Software PPU renderer with sprite-0 scroll split support
+- `game.toml` — recompiler configuration (dispatch tables, extra functions, data regions)
+- `extras.c` — game-specific hooks (coroutine scheduler, TCP debug interface)
+- `generated/` — auto-generated C code (do not edit manually)
+- `nesrecomp/` — framework submodule (recompiler + runner)
