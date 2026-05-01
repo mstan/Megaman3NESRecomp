@@ -224,7 +224,6 @@ void game_run_main(void) {
             g_frame_count++;
 
             debug_server_record_frame();
-            debug_server_check_watchpoints();
 
             if (!g_turbo) SDL_Delay(16);
         }
