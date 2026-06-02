@@ -7,7 +7,7 @@ Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
 ## What Works
 
-- Title screen with animated logo
+- Title screen
 - Main menu (GAME START / PASS WORD selection)
 - Robot master stage select screen and navigation
 - Loading into stages with background scrolling and basic enemies
