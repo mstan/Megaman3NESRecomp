@@ -126,3 +126,7 @@ if(MSVC)
     target_compile_options(MegaMan3Recomp PRIVATE /W3 /WX-)
     target_compile_options(MegaMan3Recomp PRIVATE /wd4102)
 endif()
+
+# ---- Pre-boot GUI launcher (RmlUi) ----
+include(${NESRECOMP_ROOT}/runner/launcher.cmake)
+nesrecomp_add_launcher(MegaMan3Recomp)
