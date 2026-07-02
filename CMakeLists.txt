@@ -93,7 +93,6 @@ add_executable(MegaMan3Recomp
     extras.c
     nes_snapshot.c
     verify_mode.c
-    recomp_stack.c
     generated/mega-man-3_full.c
     generated/mega-man-3_dispatch.c
 )

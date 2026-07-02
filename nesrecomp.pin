@@ -24,4 +24,7 @@
 #   3. commit this file change
 
 branch = audit/cpu-coverage-2026-05
-sha    = a29337e4f4fc673944c720741b6411758a753f61
+# TEMP (2026-06-28, working-tree only — REVERT to a29337e4...): rolled to the
+# junctioned engine HEAD (feat/nes-audio-phase1) so the MMC3 pre-render IRQ fix
+# can be built+measured on MM3. Do not commit this line.
+sha    = ce18ead728e923811f78bb7d228124d260ae713b
