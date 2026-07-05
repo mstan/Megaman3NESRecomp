@@ -1,4 +1,4 @@
-# nesrecomp.pin — pins this game's expected nesrecomp version.
+# nesrecomp.pin ??? pins this game's expected nesrecomp version.
 #
 # Two optional fields:
 #   branch = <ref>   ref to resolve when `sha` is unset.
@@ -23,8 +23,8 @@
 #   2. re-run the setup script (or manually: git -C nesrecomp checkout <sha>)
 #   3. commit this file change
 
-branch = audit/cpu-coverage-2026-05
-# TEMP (2026-06-28, working-tree only — REVERT to a29337e4...): rolled to the
+branch = master
+# TEMP (2026-06-28, working-tree only ??? REVERT to a29337e4...): rolled to the
 # junctioned engine HEAD (feat/nes-audio-phase1) so the MMC3 pre-render IRQ fix
 # can be built+measured on MM3. Do not commit this line.
-sha    = ce18ead728e923811f78bb7d228124d260ae713b
+sha    = 63c162a3d9203dba635bc49424c57a3d67a49466
