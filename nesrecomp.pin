@@ -27,4 +27,4 @@ branch = master
 # TEMP (2026-06-28, working-tree only ??? REVERT to a29337e4...): rolled to the
 # junctioned engine HEAD (feat/nes-audio-phase1) so the MMC3 pre-render IRQ fix
 # can be built+measured on MM3. Do not commit this line.
-sha    = 63c162a3d9203dba635bc49424c57a3d67a49466
+sha    = ad14cd90eaf5451de83ad0041b23975d4c6b84a3
