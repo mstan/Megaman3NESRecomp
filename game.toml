@@ -23,6 +23,67 @@ bank = 12
 addr = 0xDBE1
 bank = 13
 
+# =============================================================================
+# !!!  BAND-AID  !!!  TEMPORARY  !!!  KNOWN-WRONG-LAYER  !!!  MUST BE REMOVED  !!!
+# =============================================================================
+# The 5 [[extra_func]] entries BELOW are a deliberate band-aid added 2026-06-28
+# at explicit user request. They are NOT a fix. They violate the discipline rule
+# (this file's header: "Per-function overrides are discouraged ... fix the
+# pattern recognition instead"). They are listed here ONLY to silence dispatch
+# misses while the REAL fix is pending.
+#
+# ROOT CAUSE (rooted in Ghidra — full writeup: MM3_COROUTINE_DISPATCH_LATENT.md):
+#   MM3 runs a cooperative COROUTINE KERNEL ($FEAA scheduler / $FF21 yield).
+#   The recompiler ALREADY models it (Win32-fiber/ucontext subsystem in
+#   runner/src/coroutine.c). The gap is in function_finder.c: it does not
+#   DISCOVER these task-ENTRY / RESUME points, so call_by_address() misses them.
+#   The correct fix is a GENERIC finder detector — a sibling to the existing
+#   RTI-hijack discovery at function_finder.c ~827-906 — NOT this hand list.
+#
+# ###########################################################################
+# ## STATUS: LEGITIMATELY OUTSTANDING. THIS IS NOT DONE. When the finder    ##
+# ## learns to discover coroutine entry/resume targets, DELETE this whole   ##
+# ## block, regenerate, and confirm zero regressions.                       ##
+# ###########################################################################
+#
+# !! NOT RUNTIME-VERIFIED !!  The triggering game state was NOT reproduced this
+# session (normal stage play = 0 misses), so these were NOT confirmed to
+# actually resolve the misses — and a forced func at a mid-function / misaligned
+# address ($C7C2 especially) could even REGRESS. Next session MUST: regen ->
+# reach the triggering state -> re-measure -> prefer the finder fix and delete
+# this block. Do not trust these as correct until measured against Mesen2.
+#
+# Placement note: $C8DB/$C782/$C7C2 are FIXED-bank ($C000+) -> bank omitted
+# (= -1 = fixed). $900F lives in 16KB bank 12 (R6 window); $96BA in bank 11.
+# -----------------------------------------------------------------------------
+
+# BAND-AID: coroutine TASK ENTRY, dispatched via JMP ($0093) -> call_by_address
+# in the fiber proc. Clean fn entry (LDA #$88/STA $E4/CLI/...). FINDER MUST FIND.
+[[extra_func]]
+addr = 0xC8DB
+
+# BAND-AID: coroutine RESUME/continuation (mid-fn tail ...BPL $C75D/RTS). OUTSTANDING.
+[[extra_func]]
+addr = 0xC782
+
+# BAND-AID: coroutine RESUME (misaligned-looking; sane code a few bytes in). OUTSTANDING.
+# ^ Highest regression risk of the five — a forced func here may be mis-aligned.
+[[extra_func]]
+addr = 0xC7C2
+
+# BAND-AID: RESUME after $900C: JSR $FF21 (3rd instr of fn $9009). bank12/R6. OUTSTANDING.
+[[extra_func]]
+addr = 0x900F
+bank = 12
+
+# BAND-AID: tail fragment (ASL $C8 / ROR A / RTS). bank11/R6. OUTSTANDING.
+[[extra_func]]
+addr = 0x96BA
+bank = 11
+# =============================================================================
+# !!!  END BAND-AID BLOCK  —  see MM3_COROUTINE_DISPATCH_LATENT.md  —  REMOVE ME
+# =============================================================================
+
 [[inline_dispatch]]
 addr = 0x8023
 
