@@ -19,3 +19,7 @@ ghidra/
 # Pinned SHA recorded in nesrecomp.pin and enforced at CMake configure time.
 nesrecomp
 nestopia-core
+
+# recomp-ui launcher is a junction to the shared checkout (submodule later).
+recomp-ui
+build_ui/
