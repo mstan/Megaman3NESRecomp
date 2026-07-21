@@ -16,3 +16,5 @@ tmp_*.py
 ghidra/
 
 nestopia-core
+
+build_ui/
