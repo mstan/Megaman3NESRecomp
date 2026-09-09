@@ -90,6 +90,11 @@ This is a **static recompiler**, not an emulator. The original 6502 machine code
 - `generated/` — auto-generated C code (do not edit manually)
 - `nesrecomp/` — framework submodule (recompiler + runner)
 
+## License
+
+PolyForm Noncommercial 1.0.0 — see [`LICENSE`](LICENSE). Third-party
+components retain their own licenses.
+
 ---
 
 <p align="center">
