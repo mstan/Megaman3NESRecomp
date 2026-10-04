@@ -18,3 +18,7 @@ ghidra/
 nestopia-core
 
 build_ui/
+
+cycle-evidence/
+build-cycle/
+build-legacy/

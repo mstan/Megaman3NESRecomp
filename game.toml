@@ -2,6 +2,7 @@
 # Auto-generated from game.cfg
 
 [game]
+name = "Mega Man 3"
 output_prefix = "mega-man-3"
 push_all_jsr = true
 symbol_file = "symbols.sym"

@@ -14,6 +14,35 @@ Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
 > **Status: Work in progress.** Title screen, robot master select, and basic stage gameplay are functional. Boss fights, passwords, and special weapons are untested and may softlock. Visual gaps are expected. If you find a bug, please open an issue.
 
+## Cycle backend migration branch
+
+The normal build now uses the cycle CPU backend. Code is generated from the
+original ROM during configure and stays in the build directory. Run `setup.bat`
+or `setup.sh` to initialize the pinned engine/UI submodules, then configure:
+
+```sh
+cmake -S . -B build-cycle -DNESRECOMP_ROM="/path/to/Game.nes"
+cmake --build build-cycle --config Release --parallel 4
+```
+
+Run the executable with that same ROM path. The launcher verifies the image;
+the runtime also verifies cartridge metadata and PRG identity. `NESRECOMP_ROOT`
+and `NESRECOMP_RECOMP_UI` can name other checkouts, and cross builds accept
+`NESRECOMP_HOST_COMPILER` pointing to a runnable host compiler.
+
+Keep the old generated sources and select them explicitly with
+`-DNESRECOMP_BACKEND=legacy` in a separate build directory. Legacy save states
+cannot be loaded by the cycle backend; its cartridge shortcut slot uses
+`saves/<ROM stem>.cycstate`. Preserve existing saves and settings during rollout.
+Cycle-native comparisons use `nesrecomp/tools/cyc/cyc_verify.py`; `--interp-only`
+runs the cycle interpreter for diagnosis. Earlier `--verify` / `--emulated`
+Nestopia entry points remain in the legacy build.
+
+The owner accepted the short Windows playtest on 2026-10-04. These remain
+branch previews; no merge or release has been performed. Desktop Windows checks cover a short gameplay route and runtime
+menu/input/save-state behavior; other platforms and full-game completion have
+not been validated by this migration.
+
 ## What Works
 
 - Title screen
