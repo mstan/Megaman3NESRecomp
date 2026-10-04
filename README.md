@@ -16,6 +16,17 @@ Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
 ## Cycle backend migration branch
 
+The cycle build enables **Reduce slowdown** in the in-game menu. It gives the
+ROM additional CPU time between the visible picture and its frame interrupt;
+the display and audio retain their normal rate. Turn it off for original NES
+timing. The choice persists as `[Game] ReduceSlowdown` and in cycle save states.
+Headless checks can select `--extra-scanlines 0` (stock) or `128` (enhanced).
+
+The owner's enemy-heavy stage repro completed 503 updates in 600 display frames
+at stock timing, versus 600 with this enhancement. Native/interpreted enhanced
+runs and save-state continuation matched; the stock setting matched the previous
+cycle build exactly. This is a short repro result, not a full-game guarantee.
+
 The normal build now uses the cycle CPU backend. Code is generated from the
 original ROM during configure and stays in the build directory. Run `setup.bat`
 or `setup.sh` to initialize the pinned engine/UI submodules, then configure:
