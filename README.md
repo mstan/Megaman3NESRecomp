@@ -16,6 +16,11 @@ Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
 ## Cycle backend migration branch
 
+Default cycle controls: arrows move, Z is A, X is B, Enter is Start and
+Backslash is Select. Escape opens the menu, Tab fast-forwards, and F8/F9
+save/load the cycle state. Use Controls to remap inputs in `config.ini`.
+Older `keybinds.ini` and F5/F6/F7 instructions below apply to the legacy host.
+
 The cycle build enables **Reduce slowdown** in the in-game menu. It gives the
 ROM additional CPU time between the visible picture and its frame interrupt;
 the display and audio retain their normal rate. Turn it off for original NES
