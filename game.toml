@@ -701,6 +701,32 @@ bank = 15
 start = 0xDF1B
 end = 0xDF3A
 
+# Widescreen (mm3_widescreen.c). The spawner's edges are in $00-$03 by
+# $9C11 (bank $1A, inside check_new_enemies); $F06B is the per-object draw
+# that deletes a world object outside the 256 px screen.
+[[mod_function_hook]]
+id = "mm3.widescreen.spawn-edges"
+addr = 0x9C11
+bytes = "A5 2E 29 01 D0 38"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.widescreen.object-draw"
+addr = 0xF06B
+bytes = "BD 80 05 29 10 F0 7F"
+
+# Draw-all ($F034): starts a capture pass for objects drawn in the margins.
+[[mod_function_hook]]
+id = "mm3.widescreen.draw-pass"
+addr = 0xF034
+bytes = "E6 95 E6 4F A5 95 4A"
+
+# NMI: latches which captured draw pass the OAM DMA puts on screen.
+[[mod_function_hook]]
+id = "mm3.widescreen.nmi"
+addr = 0xC000
+bytes = "08 48 8A 48 98 48 AD 02 20"
+
 [functions]
 fixed = [
     0xD9F0,

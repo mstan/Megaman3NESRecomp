@@ -70,7 +70,7 @@ static const RecompRuntimeUiItem menu_items[] = {
     {.key = "mm3.reduce_slowdown", .section = "Game", .label = "Reduce slowdown",
      .description = "Keep gameplay smooth in enemy-heavy scenes. Turn off for original NES timing.",
      .type = RECOMP_RUNTIME_UI_BOOL, .minimum = 0, .maximum = 1, .step = 1},
-    {.key = "mm3.widescreen", .section = "Graphics", .label = "Widescreen",
+    {.key = "mm3.widescreen", .section = "Display", .label = "Widescreen (aspect ratio)",
      .description = "Show more of each stage at the sides. Menus and cutscenes stay 4:3.",
      .type = RECOMP_RUNTIME_UI_CHOICE, .minimum = NES_VIDEO_STOCK, .maximum = NES_VIDEO_FIT, .step = 1,
      .choices = widescreen_choices, .choice_count = 5}

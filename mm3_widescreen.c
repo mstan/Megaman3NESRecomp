@@ -30,14 +30,15 @@
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "cyc_video.h"
+#include "mod_function_hooks.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define STAGE_COUNT 23           /* entries of the metatile bank table $C8B9 */
 #define MAX_SEGMENTS 64
-#define MAX_EASE 8               /* px per picture the anchored view may move */
 #define MATCH_PERCENT 80
 #define SEAM 248                 /* native columns from here: background from the level */
 
@@ -50,7 +51,8 @@ static int s_seg_count, s_seg_start[MAX_SEGMENTS], s_seg_len[MAX_SEGMENTS];
 static bool s_seg_horizontal[MAX_SEGMENTS];
 
 /* Last picture. */
-static bool s_have_view;
+static uint8_t s_opaque[CYC_VIDEO_MAX_WIDTH * 240];   /* background coverage of the canvas */
+static bool s_win_valid;          /* the last picture was composed: its window drives the object hooks */
 static int s_view_left, s_cam, s_play_x0, s_screens[2], s_match, s_samples;
 static unsigned long s_composed, s_fallback;
 static const char *s_reason = "not composed";
@@ -102,7 +104,7 @@ static void ensure_stage(void)
     cyc_mod_isolate_end();
     if (!ok) return;
     s_stage = stage;
-    s_have_view = false;
+    s_win_valid = false;
     load_segments();
 }
 
@@ -120,6 +122,19 @@ static void screen_range(int s, int *left, int *right)
     }
 }
 
+/* The segment(s) the native view at cam spans: one, or two while a door
+ * scroll carries the camera from one segment into the next. */
+static void view_range(int cam, int *left, int *right)
+{
+    screen_range(cam >> 8, left, right);
+    if (cam & 255) {
+        int l2, r2;
+        screen_range((cam >> 8) + 1, &l2, &r2);
+        if (l2 < *left) *left = l2;
+        if (r2 > *right) *right = r2;
+    }
+}
+
 /* Background tile and palette at world tile column wc, tile row r (0-29). */
 static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
 {
@@ -132,15 +147,187 @@ static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
     *palette = m[0x1F00 + m16] & 3;
 }
 
+/* ---- objects beyond the native view ----
+ *
+ * MM3 keeps an object only while it is inside the 256 px screen: the
+ * per-object draw ($F06B) deletes a world object whose X minus the camera
+ * leaves 0-255 (a few flagged ones get 72 px), and the spawner ($9C00) adds
+ * stage enemies exactly at the screen edges. OAM X is 8 bits, so nothing the
+ * PPU draws can be outside the native picture either.
+ *
+ * spawn_edges ($9C11, after the spawner computed its edges into $00-$03)
+ * moves those edges out to the picture's visible window. object_draw ($F06B)
+ * keeps a world object that is outside the native view but inside that
+ * window: it runs the game's own draw for it in an isolated call with the
+ * camera moved so the object sits mid-screen, keeps the sprites it wrote
+ * (drawn into the margins by the compositor) and copies back only the
+ * object's own state the routine advances (animation counters; deletion when
+ * its animation ends), then returns as the routine's RTS would. */
+
+#define OBJECT_PAD 16                 /* object centre this far past the window still lives */
+#define MAX_WIDE_SPRITES 256
+#define SLOT_ARRAYS 24                /* per-object arrays $0300, $0320, ... $05E0 */
+
+/* Sprites of one object-draw pass ($F034 bumps $95, then draws every slot).
+ * A pass's OAM reaches the screen at the next NMI that does its OAM DMA (the
+ * NMI skips it while the main loop is still busy: a slowdown frame), so
+ * capture into one buffer and show the one latched at that NMI - swapping
+ * per video frame showed an empty buffer on slowdown frames and margin
+ * enemies blinked out while still able to hurt. */
+typedef struct { int16_t x; uint8_t y, tile, attr; } WideSprite;
+static WideSprite s_wide[2][MAX_WIDE_SPRITES];
+static int s_wide_n[2], s_wide_cur, s_wide_shown = 1;
+static int s_win_left, s_win_right;   /* world X the last picture showed (clipped to segments) */
+static unsigned long s_kept, s_spawn_widened;
+
+static const char *const HOOK_SPAWN = "mm3.widescreen.spawn-edges";
+static const char *const HOOK_DRAW = "mm3.widescreen.object-draw";
+static const char *const HOOK_NMI = "mm3.widescreen.nmi";
+static const char *const HOOK_PASS = "mm3.widescreen.draw-pass";
+
+/* The draw-all routine ($F034) starts a pass: capture into the buffer that is
+ * not on screen. Its counter $95 is not a reliable pass key - other routines
+ * store to it, a repeated value kept the buffer and moving margin sprites
+ * left trails - so the pass is the routine's own entry. */
+static int begin_pass(uint16_t addr)
+{
+    (void)addr;
+    if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
+    s_wide_n[s_wide_cur] = 0;
+    return 0;
+}
+
+/* NMI ($C000): the OAM DMA happens unless the update flags are busy
+ * (C015-C019); then the pass just captured is what the screen shows. */
+static int nmi_latch(uint16_t addr)
+{
+    (void)addr;
+    if (ram(0xEE) | ram(0x9A)) return 0;
+    s_wide_shown = s_wide_cur;
+    return 0;
+}
+
+static int spawn_edges(uint16_t addr)
+{
+    (void)addr;
+    if (!s_win_valid) return 0;
+    int left = cyc_mod_peek(0x00) | cyc_mod_peek(0x01) << 8;
+    int right = cyc_mod_peek(0x02) | cyc_mod_peek(0x03) << 8;
+    int wl = s_win_left < 0 ? 0 : s_win_left, wr = s_win_right - 1 > 0xFFFF ? 0xFFFF : s_win_right - 1;
+    if (wl < left) { cyc_mod_poke(0x00, (uint8_t)wl); cyc_mod_poke(0x01, (uint8_t)(wl >> 8)); }
+    if (wr > right) { cyc_mod_poke(0x02, (uint8_t)wr); cyc_mod_poke(0x03, (uint8_t)(wr >> 8)); }
+    if (wl < left || wr > right) s_spawn_widened++;
+    return 0;
+}
+
+static int object_draw(uint16_t addr)
+{
+    (void)addr;
+    if (!s_win_valid) return 0;
+    CycModRegs r;
+    cyc_mod_regs(&r);
+    int x = r.x;
+    if (x == 0 || x >= 0x20) return 0;                       /* Mega Man stays native */
+    if (!(ram((uint16_t)(0x580 + x)) & 0x10) || ram((uint16_t)(0x3E0 + x))) return 0;
+    int ox = ram((uint16_t)(0x380 + x)) << 8 | ram((uint16_t)(0x360 + x));
+    int cam = ram(0xF9) << 8 | ram(0xFC), dx = ox - cam;
+    if (dx >= 0 && dx < 256) return 0;                       /* the game draws it */
+    if (ox < s_win_left - OBJECT_PAD || ox >= s_win_right + OBJECT_PAD) return 0;   /* the game deletes it */
+
+    int shifted = ox - 128 < 0 ? 0 : ox - 128;
+    /* The object's whole record: 24 arrays of 32 slots, $0300-$05FF. The
+     * draw advances more than animation - e.g. the hit-flash timer in $04E0,
+     * without which an enemy hit in the margin stayed invulnerable. */
+    uint8_t keep[SLOT_ARRAYS];
+    WideSprite *buf = s_wide[s_wide_cur];
+    int n = s_wide_n[s_wide_cur];
+    if (!cyc_mod_isolate_begin()) return 0;
+    cyc_mod_poke(0xFC, (uint8_t)shifted); cyc_mod_poke(0xF9, (uint8_t)(shifted >> 8));
+    cyc_mod_poke(0x97, 0x04);                                /* OAM from entry 1 (0 means full) */
+    CycModRegs call = r;
+    bool ok = cyc_mod_call(0xF06B, &call);
+    if (ok) {
+        int end = cyc_mod_peek(0x97);
+        if (end == 0) end = 256;
+        for (int i = 4; i < end && n < MAX_WIDE_SPRITES; i += 4) {
+            uint8_t y = cyc_mod_peek((uint16_t)(0x200 + i));
+            if (y >= 0xEF) continue;
+            buf[n++] = (WideSprite){(int16_t)(cyc_mod_peek((uint16_t)(0x203 + i)) + shifted - cam), y,
+                                    cyc_mod_peek((uint16_t)(0x201 + i)), cyc_mod_peek((uint16_t)(0x202 + i))};
+        }
+        for (int f = 0; f < SLOT_ARRAYS; f++) keep[f] = cyc_mod_peek((uint16_t)(0x300 + f * 0x20 + x));
+    }
+    cyc_mod_isolate_end();
+    if (!ok) return 0;
+    for (int f = 0; f < SLOT_ARRAYS; f++) {
+        uint16_t a = (uint16_t)(0x300 + f * 0x20 + x);
+        if (ram(a) != keep[f]) cyc_mod_poke(a, keep[f]);
+    }
+    s_wide_n[s_wide_cur] = n;
+    s_kept++;
+    return 1;
+}
+
+static void draw_wide_sprites(uint32_t *out, int width, int play_x0, const uint8_t *opaque)
+{
+    const WideSprite *sp = s_wide[s_wide_shown];
+    for (int i = s_wide_n[s_wide_shown] - 1; i >= 0; i--) {       /* lower entries on top, as in OAM */
+        int cx = play_x0 + sp[i].x, y = sp[i].y + 1, line = y < 240 ? y : 239;
+        if (cx <= -8 || cx >= width) continue;
+        uint8_t a = sp[i].attr;
+        unsigned flags = (a & 0x40 ? CYC_TILE_HFLIP : 0) | (a & 0x80 ? CYC_TILE_VFLIP : 0) | (a & 0x20 ? CYC_TILE_BEHIND : 0);
+        int palette = (a & 3) + 4;
+        if (!cyc_render_line_sprite16(line)) {
+            cyc_render_tile(out, width, 240, cx, y, (uint16_t)(cyc_render_line_sprite_table(line) + sp[i].tile * 16),
+                            palette, flags, opaque, NULL);
+        } else {
+            uint16_t table = sp[i].tile & 1 ? 0x1000 : 0;
+            int top = sp[i].tile & 0xFE, bottom = top + 1;
+            if (a & 0x80) { int t = top; top = bottom; bottom = t; }
+            cyc_render_tile(out, width, 240, cx, y, (uint16_t)(table + top * 16), palette, flags, opaque, NULL);
+            cyc_render_tile(out, width, 240, cx, y + 8, (uint16_t)(table + bottom * 16), palette, flags, opaque, NULL);
+        }
+    }
+}
+
+#if defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+static void __cdecl register_hooks(void);
+__declspec(allocate(".CRT$XCU")) void (__cdecl *mm3_ws_register_hooks)(void) = register_hooks;
+#pragma comment(linker, "/include:mm3_ws_register_hooks")
+static void __cdecl register_hooks(void)
+#else
+static void register_hooks(void) __attribute__((constructor));
+static void register_hooks(void)
+#endif
+{
+    /* Before the host validates hook sites (cyc_session_start). */
+    if (!nes_mod_register_function_entry_plugin(HOOK_SPAWN, 0x9C11, spawn_edges) ||
+        !nes_mod_register_function_entry_plugin(HOOK_DRAW, 0xF06B, object_draw) ||
+        !nes_mod_register_function_entry_plugin(HOOK_NMI, 0xC000, nmi_latch) ||
+        !nes_mod_register_function_entry_plugin(HOOK_PASS, 0xF034, begin_pass))
+        fprintf(stderr, "[mm3 widescreen] cannot register hooks\n");
+}
+
+static void enable_hooks(bool on)
+{
+    nes_mod_set_function_hook_enabled(HOOK_SPAWN, on);
+    nes_mod_set_function_hook_enabled(HOOK_DRAW, on);
+    nes_mod_set_function_hook_enabled(HOOK_NMI, on);
+    nes_mod_set_function_hook_enabled(HOOK_PASS, on);
+    if (!on) s_win_valid = false;
+}
+
 /* ---- picture ---- */
 
-static uint32_t level_pixel(int wx, int row, uint16_t table, const uint32_t colors[16])
+static uint32_t level_pixel(int wx, int row, uint16_t table, const uint32_t colors[16], uint8_t *opaque)
 {
     uint8_t tile, pal;
     level_tile(wx >> 3, row >> 3, &tile, &pal);
     uint16_t p = (uint16_t)(table + tile * 16 + (row & 7));
     int bit = 7 - (wx & 7);
     int pixel = ((cyc_render_chr(p) >> bit) & 1) | (((cyc_render_chr((uint16_t)(p + 8)) >> bit) & 1) << 1);
+    if (opaque) *opaque = pixel != 0;
     return colors[pixel ? pal * 4 + pixel : 0];
 }
 
@@ -179,7 +366,7 @@ static int score(const Lines *l, int cam, const int screens[2], int *samples)
 static int fallback(const char *why)
 {
     s_reason = why;
-    s_have_view = false;
+    s_win_valid = false;          /* objects follow the game's own 256 px rules again */
     s_fallback++;
     return 0;
 }
@@ -220,25 +407,14 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
     s_match = best; s_samples = samples;
     if (samples == 0 || best * 100 < samples * MATCH_PERCENT) return fallback("not level background");
 
-    /* The view: centred on the native picture, but kept inside the segment so
-     * nothing past a scroll lock shows; eased so a door push or segment change
-     * slides instead of jumping. */
+    /* The native picture never moves: it stays centred, so screen-space
+     * sprites (the energy bars) stay put and leaving a room built for 4:3
+     * does not slide the picture. What the margins show is clipped to the
+     * scroll segment(s) the native view spans - two during a door scroll -
+     * and is black past a scroll lock. */
+    int play_x0 = (width - 256) / 2, view = cam - play_x0;
     int left, right;
-    screen_range(s, &left, &right);
-    if (cam < left) left = cam;
-    if (cam + 256 > right) right = cam + 256;
-    int target = cam - (width - 256) / 2;
-    if (right - left <= width) target = left - (width - (right - left)) / 2;
-    else if (target < left) target = left;
-    else if (target > right - width) target = right - width;
-    int view = target;
-    if (s_have_view && abs(target - s_view_left) <= 256) {
-        if (target > s_view_left + MAX_EASE) view = s_view_left + MAX_EASE;
-        else if (target < s_view_left - MAX_EASE) view = s_view_left - MAX_EASE;
-    }
-    if (view > cam) view = cam;
-    if (view < cam - (width - 256)) view = cam - (width - 256);
-    int play_x0 = cam - view;
+    view_range(cam, &left, &right);
 
     uint32_t colors[16];
     for (int i = 0; i < 16; i++) colors[i] = cyc_render_color(i & 3 ? i : 0);
@@ -249,20 +425,31 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
      * frame. */
     memset(s_sprites, 0, sizeof s_sprites);
     cyc_render_sprites(s_sprites, 256, 240, 0, cyc_frame_bg_opaque(), NULL, NULL);
+    const uint8_t *native_opaque = cyc_frame_bg_opaque();
     for (int y = 0; y < height; y++) {
-        int sl, sr, screen = screens[l.part[y]], row = l.fine_y[y];
-        screen_range(screen, &sl, &sr);
+        int sl = left, sr = right, screen = screens[l.part[y]], row = l.fine_y[y];
+        if (screens[0] != screens[1]) screen_range(screen, &sl, &sr);   /* vertical transition: each part's own */
         uint16_t table = cyc_render_line_bg_table(y);
         bool clip_left = !(cyc_render_line_mask(y) & 2);
         uint32_t *line = out + y * width;
+        uint8_t *opaque = s_opaque + y * width;
         for (int x = 0; x < width; x++) {
             int nx = x - play_x0;
-            if (nx >= (clip_left ? 8 : 0) && nx < SEAM) { line[x] = native[y * 256 + nx]; continue; }
-            if (nx >= SEAM && nx < 256 && (s_sprites[y * 256 + nx] >> 24)) { line[x] = s_sprites[y * 256 + nx]; continue; }
+            opaque[x] = 0;
+            if (nx >= (clip_left ? 8 : 0) && nx < SEAM) {
+                line[x] = native[y * 256 + nx];
+                opaque[x] = native_opaque[y * 256 + nx];
+                continue;
+            }
             int wx = screen * 256 + (cam & 255) + nx;
-            line[x] = wx < sl || wx >= sr ? 0xFF000000u : level_pixel(wx, row, table, colors);
+            line[x] = wx < sl || wx >= sr ? 0xFF000000u : level_pixel(wx, row, table, colors, &opaque[x]);
+            if (nx >= SEAM && nx < 256 && (s_sprites[y * 256 + nx] >> 24)) line[x] = s_sprites[y * 256 + nx];
         }
     }
+    draw_wide_sprites(out, width, play_x0, s_opaque);
+    s_win_left = left > view ? left : view;
+    s_win_right = right < view + width ? right : view + width;
+    s_win_valid = true;
     if (s_check && cyc_render_background(s_bg)) {
         /* The decoder's own picture of the native area against the PPU's
          * background-only capture: palettes, CHR banks and fine scroll. */
@@ -273,7 +460,7 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
             int screen = screens[l.part[y]];
             for (int nx = 8; nx < SEAM; nx++) {
                 uint32_t want = s_bg[y * 256 + nx];
-                uint32_t got = level_pixel(screen * 256 + (cam & 255) + nx, l.fine_y[y], table, colors);
+                uint32_t got = level_pixel(screen * 256 + (cam & 255) + nx, l.fine_y[y], table, colors, NULL);
                 if (got != want && !s_check_bad++) {
                     s_check_x = nx; s_check_y = y; s_check_want = want; s_check_got = got;
                 }
@@ -282,7 +469,6 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
         }
     }
     cyc_render_set_native_origin(play_x0);
-    s_have_view = true;
     s_view_left = view; s_cam = cam; s_play_x0 = play_x0;
     s_screens[0] = screens[0]; s_screens[1] = screens[1];
     s_reason = "composed";
@@ -295,21 +481,33 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
 void mm3_ws_power_on(void)
 {
     s_stage = -1;
-    s_have_view = false;
+    s_win_valid = false;
+    s_wide_n[0] = s_wide_n[1] = 0;
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
+    enable_hooks(s_mode != NES_VIDEO_STOCK);
 }
 
-void mm3_ws_frame_end(void) { if (s_mode != NES_VIDEO_STOCK) ensure_stage(); }
+void mm3_ws_frame_end(void)
+{
+    if (s_mode == NES_VIDEO_STOCK) return;
+    ensure_stage();
+}
 
-void mm3_ws_state_loaded(void) { s_stage = -1; s_have_view = false; ensure_stage(); }
+void mm3_ws_state_loaded(void)
+{
+    s_stage = -1;
+    s_win_valid = false;
+    s_wide_n[0] = s_wide_n[1] = 0;
+    ensure_stage();
+}
 
 bool mm3_ws_set_mode(int mode)
 {
     if (mode < NES_VIDEO_STOCK || mode >= NES_VIDEO_MODE_COUNT) return false;
     s_mode = mode;
-    s_have_view = false;
     cyc_video_set_mode(mode);
+    enable_hooks(mode != NES_VIDEO_STOCK);
     return true;
 }
 
@@ -336,9 +534,11 @@ void mm3_ws_describe(char *out, size_t n)
              "\"mode\":\"%s\",\"width\":%d,\"stage\":%d,\"segments\":%d,\"reason\":\"%s\","
              "\"cam\":%d,\"view_left\":%d,\"play_x0\":%d,\"screens\":[%d,%d],"
              "\"match\":%d,\"samples\":%d,\"composed\":%lu,\"fallback\":%lu,"
-             "\"check_bad\":%ld,\"check_total\":%ld,\"check_first\":[%d,%d,\"%08X\",\"%08X\"]",
+             "\"check_bad\":%ld,\"check_total\":%ld,\"check_first\":[%d,%d,\"%08X\",\"%08X\"],"
+             "\"window\":[%d,%d,%s],\"wide_sprites\":%d,\"kept\":%lu,\"spawn_widened\":%lu",
              nes_video_geometry_name(s_mode), cyc_video_width(), s_stage, s_seg_count, s_reason,
              s_cam, s_view_left, s_play_x0, s_screens[0], s_screens[1],
              s_match, s_samples, s_composed, s_fallback, s_check_bad, s_check_total,
-             s_check_x, s_check_y, (unsigned)s_check_want, (unsigned)s_check_got);
+             s_check_x, s_check_y, (unsigned)s_check_want, (unsigned)s_check_got,
+             s_win_left, s_win_right, s_win_valid ? "true" : "false", s_wide_n[s_wide_shown], s_kept, s_spawn_widened);
 }
