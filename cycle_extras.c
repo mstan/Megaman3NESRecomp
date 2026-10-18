@@ -1,7 +1,10 @@
 /* Cycle-host enhancements and an optional frame-pacing observer. */
 #include "cyc_core.h"
 #include "cyc_host_extras.h"
+#include "cyc_mod.h"
 #include "cyc_trace.h"
+#include "cyc_video.h"
+#include "mm3_widescreen.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -21,6 +24,7 @@ static void power_on(void *ctx)
 {
     (void)ctx;
     cyc_set_extra_scanlines(reduce_slowdown ? 128u : 0u);
+    mm3_ws_power_on();
 }
 
 static void load_setting(void *ctx, const char *key, const char *value)
@@ -30,6 +34,7 @@ static void load_setting(void *ctx, const char *key, const char *value)
         if (!strcmp(value, "0")) reduce_slowdown = 0;
         else if (!strcmp(value, "1")) reduce_slowdown = 1;
     }
+    if (!strcmp(key, "Widescreen")) mm3_ws_set_mode_name(value);
 }
 
 static void save_settings(void *ctx, FILE *f)
@@ -37,12 +42,14 @@ static void save_settings(void *ctx, FILE *f)
     (void)ctx;
     reduce_slowdown = cyc_extra_scanlines() != 0;
     fprintf(f, "ReduceSlowdown = %d\n", reduce_slowdown);
+    mm3_ws_save_setting(f);
 }
 
 #ifdef CYC_WITH_RECOMP_UI
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
+    if (!strcmp(item->key, "mm3.widescreen")) { *out = mm3_ws_mode(); return 1; }
     if (strcmp(item->key, "mm3.reduce_slowdown")) return 0;
     *out = cyc_extra_scanlines() != 0;
     return 1;
@@ -51,16 +58,22 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
+    if (!strcmp(item->key, "mm3.widescreen")) return mm3_ws_set_mode(value);
     if (strcmp(item->key, "mm3.reduce_slowdown") || (value != 0 && value != 1)) return 0;
     if (!cyc_set_extra_scanlines(value ? 128u : 0u)) return 0;
     reduce_slowdown = value;
     return 1;
 }
 
+static const char *const widescreen_choices[] = {"Off (4:3)", "16:9", "21:9", "32:9", "Fit window"};
 static const RecompRuntimeUiItem menu_items[] = {
     {.key = "mm3.reduce_slowdown", .section = "Game", .label = "Reduce slowdown",
      .description = "Keep gameplay smooth in enemy-heavy scenes. Turn off for original NES timing.",
-     .type = RECOMP_RUNTIME_UI_BOOL, .minimum = 0, .maximum = 1, .step = 1}
+     .type = RECOMP_RUNTIME_UI_BOOL, .minimum = 0, .maximum = 1, .step = 1},
+    {.key = "mm3.widescreen", .section = "Display", .label = "Widescreen (aspect ratio)",
+     .description = "Show more of each stage at the sides. Menus and cutscenes stay 4:3.",
+     .type = RECOMP_RUNTIME_UI_CHOICE, .minimum = NES_VIDEO_STOCK, .maximum = NES_VIDEO_FIT, .step = 1,
+     .choices = widescreen_choices, .choice_count = 5}
 };
 static const RecompRuntimeUiCallbacks menu_callbacks = {.get_value = get_value, .set_value = set_value};
 #endif
@@ -81,10 +94,36 @@ static void tcp_slowdown(int id, const char *line)
     cyc_tcp_ok(id, fields);
 }
 
+static void tcp_widescreen(int id, const char *line)
+{
+    char mode[16];
+    if (cyc_tcp_str(line, "mode", mode, sizeof(mode)) && !mm3_ws_set_mode_name(mode)) {
+        cyc_tcp_err(id, "mode: off, 16:9, 21:9, 32:9 or fit"); return;
+    }
+    bool check;
+    if (cyc_tcp_bool(line, "check", &check)) mm3_ws_set_check(check);
+    char fields[512];
+    mm3_ws_describe(fields, sizeof(fields));
+    cyc_tcp_ok(id, fields);
+}
+
+/* Test driving only (refill health on a scripted route): a CPU RAM store. */
+static void tcp_poke(int id, const char *line)
+{
+    long addr, value;
+    if (!cyc_tcp_long(line, "addr", &addr) || !cyc_tcp_long(line, "value", &value) ||
+        addr < 0 || addr > 0x7FF || value < 0 || value > 255 || !cyc_mod_poke((uint16_t)addr, (uint8_t)value)) {
+        cyc_tcp_err(id, "addr 0-0x7FF and value 0-255 required"); return;
+    }
+    cyc_tcp_ok(id, NULL);
+}
+
 static void tcp_setup(void *ctx)
 {
     (void)ctx;
+    cyc_tcp_register("mm3_poke", "store a CPU RAM byte: addr, value (test driving)", tcp_poke);
     cyc_tcp_register("mm3_slowdown", "query/set {enabled: bool} slowdown reduction", tcp_slowdown);
+    cyc_tcp_register("mm3_ws", "widescreen state; set {mode: off|16:9|21:9|32:9|fit}", tcp_widescreen);
 }
 #endif
 
@@ -109,6 +148,7 @@ static void close_stats(void) { if (stats) fclose(stats); stats = NULL; }
 static bool option(void *ctx, const char *name, const char *value)
 {
     (void)ctx;
+    if (!strcmp(name, "--widescreen")) return mm3_ws_set_mode_name(value);
     if (strcmp(name, "--mm3-frame-stats")) return false;
     stats = fopen(value, "w");
     if (!stats) return false;
@@ -131,6 +171,7 @@ static void begin(void *ctx)
 static void end(void *ctx)
 {
     (void)ctx;
+    mm3_ws_frame_end();
     if (!stats) return;
     const uint8_t *r = cyc_cpu_ram();
     fprintf(stats, "%u,%llu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", frame++,
@@ -138,17 +179,24 @@ static void end(void *ctx)
             r[0xEE], r[0x9A], r[0x31], r[0x22], r[0xA0], r[0xAE]);
 }
 
+static void state_loaded(void *ctx)
+{
+    (void)ctx;
+    mm3_ws_state_loaded();
+}
+
 const CycHostExtras *cyc_host_extras(void)
 {
     static const CycHostOption options[] = {
-        {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"}
+        {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"},
+        {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default 16:9)"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,
-        .frame_begin = begin, .frame_end = end,
-        .options = options, .option_count = 1, .option = option,
+        .frame_begin = begin, .frame_end = end, .state_loaded = state_loaded,
+        .options = options, .option_count = 2, .option = option,
 #ifdef CYC_WITH_RECOMP_UI
-        .menu_items = menu_items, .menu_item_count = 1, .menu_callbacks = &menu_callbacks,
+        .menu_items = menu_items, .menu_item_count = 2, .menu_callbacks = &menu_callbacks,
 #endif
 #ifdef CYC_WITH_SDL
         .tcp_setup = tcp_setup,
