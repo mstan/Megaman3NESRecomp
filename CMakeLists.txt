@@ -19,6 +19,15 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
     if(NOT EXISTS "${NESRECOMP_ROM}")
         message(FATAL_ERROR "Set NESRECOMP_ROM to the original ROM image for this title")
     endif()
+    find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_usa_rom.py"
+        --rom "${NESRECOMP_ROM}" --crc 603AAA57 --mapper 4 --title "Mega Man III"
+        RESULT_VARIABLE _usa_rom_result)
+    if(NOT _usa_rom_result EQUAL 0)
+        message(FATAL_ERROR "The North American ROM profile is required for this build")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_usa_rom.py" "${NESRECOMP_ROM}")
     include("${NESRECOMP_ROOT}/runner/cyc/project.cmake")
     nesrecomp_add_cycle_game(MegaMan3Recomp
         ROM "${NESRECOMP_ROM}"
