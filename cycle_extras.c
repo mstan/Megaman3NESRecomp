@@ -189,7 +189,7 @@ const CycHostExtras *cyc_host_extras(void)
 {
     static const CycHostOption options[] = {
         {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"},
-        {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default 16:9)"}
+        {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default fit)"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,

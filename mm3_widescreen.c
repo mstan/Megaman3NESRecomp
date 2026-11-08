@@ -42,7 +42,7 @@
 #define MATCH_PERCENT 80
 #define SEAM 248                 /* native columns from here: background from the level */
 
-static int s_mode = NES_VIDEO_16_9;
+static int s_mode = NES_VIDEO_FIT;
 
 /* Stage tables. */
 static uint8_t s_stage_bank[0x2000], s_tile_bank[0x2000];   /* $A000-$BFFF */
