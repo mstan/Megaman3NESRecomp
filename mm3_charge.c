@@ -271,6 +271,7 @@ static int set_enabled(int requested, const char *path)
     return 1;
 }
 void mm3_charge_power_on(void) { memset(s_states, 0, sizeof s_states); if (s_requested) set_enabled(1, s_donor_path[0] ? s_donor_path : nes_mod_external_rom_path("mega-man-3-usa.backport.mm4", "charge", "mm4-usa")); }
+void mm3_charge_new_team(void) { memset(s_states, 0, sizeof s_states); if (s_on) cyc_mm4_audio_reset(); }
 void mm3_charge_frame_end(void) { if (s_on) cyc_mm4_audio_frame_end(); }
 void mm3_charge_audio_mix(int16_t *out, size_t n) { if (s_on) cyc_mm4_audio_mix(out, n); }
 bool mm3_charge_option(const char *name, const char *value)

@@ -7,6 +7,7 @@ int mm3_charge_counter(void);
 void mm3_charge_dispatch(void);
 void mm3_charge_cancel(void);
 void mm3_charge_power_on(void);
+void mm3_charge_new_team(void);
 void mm3_charge_frame_end(void);
 void mm3_charge_audio_mix(int16_t *out, size_t count);
 bool mm3_charge_option(const char *name, const char *value);

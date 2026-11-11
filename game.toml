@@ -812,6 +812,18 @@ addr = 0x8014
 bytes = "A0 01 E4 5B F0 46 C8 E4"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.coop.enemy-done"
+addr = 0x808B
+bytes = "E6 EF A6 EF E0 20 F0 03"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.death-music"
+addr = 0xF89A
+bytes = "86 00 A6 DA 85 01 B5 DC"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

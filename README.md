@@ -198,5 +198,8 @@ The feature branch also has a development `--coop on` path, with complementary
 characters (`--coop-p1 megaman|protoman`), separate native player/Rush/projectile
 state, independent L/R equipment selection and current-build save/load. Player
 two's controls are kept separate from the retail cartridge's debug controls.
+Ordinary enemies and pickups use the nearer living player. A survivor retains
+control and stage music; a team wipe uses the native shared-life retry. Native
+health and ammo refills keep their recipient's inventory and drawing context.
 This remains a development slice: co-op menus, boss/script and transition
 coverage, full lifecycle/camera behavior and online qualification are pending.

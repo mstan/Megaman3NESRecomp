@@ -197,6 +197,7 @@ static int begin_pass(uint16_t addr)
     (void)addr;
     if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
     s_wide_n[s_wide_cur] = 0;
+    mm3_coop_before_draw();
     mm3_proto_draw_begin();
     mm3_coop_draw();
     return 0;
@@ -209,8 +210,10 @@ static int nmi_latch(uint16_t addr)
     (void)addr;
     if (ram(0xEE) | ram(0x9A)) return 0;
     s_wide_shown = s_wide_cur;
+    int previous = mm3_coop_present_begin();
     mm3_proto_draw_latch();
     mm3_coop_latch();
+    mm3_coop_present_end(previous);
     return 0;
 }
 
@@ -486,7 +489,7 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
 /* ---- host ---- */
 
 static uint32_t s_character_picture[256 * 240];
-static int render(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
+static int compose(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
 {
     int changed = mm3_proto_native_picture(s_character_picture);
     if (changed) native = s_character_picture;
@@ -505,6 +508,13 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
     }
     cyc_render_set_native_origin(left);
     return mm3_coop_paint(out, width, left, NULL) || changed;
+}
+static int render(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
+{
+    int previous = mm3_coop_present_begin();
+    int result = compose(out, width, height, native_x0, native, user);
+    mm3_coop_present_end(previous);
+    return result;
 }
 
 void mm3_ws_refresh_policy(void)
