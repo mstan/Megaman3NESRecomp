@@ -213,5 +213,8 @@ The last active player cannot withdraw. Native checkpoint recovery restores a
 dead partner with full HP and Buster selected, retaining their remaining ammo.
 A team retry also retains each player's own ammo. Departure and arrival use the
 native teleport animation and movement, with contact protection during arrival.
+Co-op sprites follow the scene's native drawing order, including enemies in the
+widened margins. Captured sprites retain their character owner across the death
+handoff, and current-build states include the margin sprites and view bounds.
 This remains a development slice: boss/script and transition coverage, full
 lifecycle/camera behavior and online qualification are pending.

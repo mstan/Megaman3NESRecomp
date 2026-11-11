@@ -35,6 +35,7 @@
 #include "cyc_render.h"
 #include "cyc_video.h"
 #include "mod_function_hooks.h"
+#include "mod_savestate.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -178,11 +179,50 @@ static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
  * capture into one buffer and show the one latched at that NMI - swapping
  * per video frame showed an empty buffer on slowdown frames and margin
  * enemies blinked out while still able to hurt. */
-typedef struct { int16_t x; uint8_t y, tile, attr; } WideSprite;
+typedef struct { int16_t x; uint8_t y, tile, attr, after, after_body, reserved; } WideSprite;
 static WideSprite s_wide[2][MAX_WIDE_SPRITES];
 static int s_wide_n[2], s_wide_cur, s_wide_shown = 1;
 static int s_win_left, s_win_right;   /* world X the last picture showed (clipped to segments) */
 static unsigned long s_kept, s_spawn_widened;
+static int s_restored;
+typedef struct {
+    char magic[4];
+    int16_t count[2];
+    uint8_t current, shown, valid, reserved;
+    int32_t left, right;
+    WideSprite sprites[2][MAX_WIDE_SPRITES];
+} WideState;
+static int wide_get(uint8_t *out, int cap)
+{
+    if (cap < (int)sizeof(WideState)) return -1;
+    WideState n = {0}; memcpy(n.magic,"MW03",4);
+    for (int i = 0; i < 2; i++) n.count[i] = (int16_t)s_wide_n[i];
+    n.current = (uint8_t)s_wide_cur; n.shown = (uint8_t)s_wide_shown; n.valid = s_win_valid;
+    n.left = s_win_left; n.right = s_win_right; memcpy(n.sprites,s_wide,sizeof s_wide);
+    memcpy(out,&n,sizeof n); return sizeof n;
+}
+static int wide_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    WideState n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    if (memcmp(n.magic,"MW03",4) || n.current > 1 || n.shown > 1 || n.valid > 1 || n.reserved ||
+        n.left < 0 || n.right > 65536 || n.right < n.left || (n.valid && n.right == n.left)) return 0;
+    for (int f = 0; f < 2; f++) {
+        if (n.count[f] < 0 || n.count[f] > MAX_WIDE_SPRITES) return 0;
+        for (int i = 0; i < n.count[f]; i++) if (n.sprites[f][i].after > 63 || n.sprites[f][i].after_body > 1 || n.sprites[f][i].reserved) return 0;
+    }
+    return 1;
+}
+static int wide_set(const uint8_t *in, int size)
+{
+    if (!wide_valid(in,size)) return 0;
+    s_restored = size != 0;
+    if (!size) { memset(s_wide,0,sizeof s_wide); s_wide_n[0] = s_wide_n[1] = 0; s_win_valid = false; return 1; }
+    WideState n; memcpy(&n,in,size); memcpy(s_wide,n.sprites,sizeof s_wide);
+    for (int i = 0; i < 2; i++) s_wide_n[i] = n.count[i];
+    s_wide_cur = n.current; s_wide_shown = n.shown; s_win_valid = n.valid != 0;
+    s_win_left = n.left; s_win_right = n.right; return 1;
+}
 
 static const char *const HOOK_SPAWN = "mm3.widescreen.spawn-edges";
 static const char *const HOOK_DRAW = "mm3.widescreen.object-draw";
@@ -199,6 +239,7 @@ static int begin_pass(uint16_t addr)
     if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
     s_wide_n[s_wide_cur] = 0;
     mm3_coop_before_draw();
+    mm3_coop_picture_begin();
     mm3_proto_draw_begin();
     mm3_coop_draw();
     return 0;
@@ -211,9 +252,11 @@ static int nmi_latch(uint16_t addr)
     (void)addr;
     if (ram(0xEE) | ram(0x9A)) return 0;
     s_wide_shown = s_wide_cur;
-    int previous = mm3_coop_present_begin();
+    /* This hook precedes the actual DMA: choose its captured owner directly.
+     * The physical-OAM fingerprint is only valid after the native copy. */
+    int owner = mm3_coop_latch();
+    int previous = mm3_coop_present_player(owner);
     mm3_proto_draw_latch();
-    mm3_coop_latch();
     mm3_coop_present_end(previous);
     return 0;
 }
@@ -234,6 +277,7 @@ static int spawn_edges(uint16_t addr)
 static int object_draw(uint16_t addr)
 {
     (void)addr;
+    mm3_coop_primary_begin();
     if (!s_win_valid) return 0;
     CycModRegs r;
     cyc_mod_regs(&r);
@@ -252,6 +296,8 @@ static int object_draw(uint16_t addr)
     uint8_t keep[SLOT_ARRAYS];
     WideSprite *buf = s_wide[s_wide_cur];
     int n = s_wide_n[s_wide_cur];
+    int after = ram(0x97) ? ram(0x97)/4-1 : 63;
+    int after_body = mm3_coop_primary_seen();
     if (!cyc_mod_isolate_begin()) return 0;
     cyc_mod_poke(0xFC, (uint8_t)shifted); cyc_mod_poke(0xF9, (uint8_t)(shifted >> 8));
     cyc_mod_poke(0x97, 0x04);                                /* OAM from entry 1 (0 means full) */
@@ -264,7 +310,8 @@ static int object_draw(uint16_t addr)
             uint8_t y = cyc_mod_peek((uint16_t)(0x200 + i));
             if (y >= 0xEF) continue;
             buf[n++] = (WideSprite){(int16_t)(cyc_mod_peek((uint16_t)(0x203 + i)) + shifted - cam), y,
-                                    cyc_mod_peek((uint16_t)(0x201 + i)), cyc_mod_peek((uint16_t)(0x202 + i))};
+                                    cyc_mod_peek((uint16_t)(0x201 + i)), cyc_mod_peek((uint16_t)(0x202 + i)),
+                                    (uint8_t)after,(uint8_t)after_body,0};
         }
         for (int f = 0; f < SLOT_ARRAYS; f++) keep[f] = cyc_mod_peek((uint16_t)(0x300 + f * 0x20 + x));
     }
@@ -279,26 +326,27 @@ static int object_draw(uint16_t addr)
     return 1;
 }
 
-static void draw_wide_sprites(uint32_t *out, int width, int play_x0, const uint8_t *opaque)
+static void paint_wide_sprite(uint32_t *out, int width, int play_x0, const uint8_t *opaque, const WideSprite *sp)
 {
-    const WideSprite *sp = s_wide[s_wide_shown];
-    for (int i = s_wide_n[s_wide_shown] - 1; i >= 0; i--) {       /* lower entries on top, as in OAM */
-        int cx = play_x0 + sp[i].x, y = sp[i].y + 1, line = y < 240 ? y : 239;
-        if (cx <= -8 || cx >= width) continue;
-        uint8_t a = sp[i].attr;
+        int cx = play_x0 + sp->x, y = sp->y + 1, line = y < 240 ? y : 239;
+        if (cx <= -8 || cx >= width) return;
+        uint8_t a = sp->attr;
         unsigned flags = (a & 0x40 ? CYC_TILE_HFLIP : 0) | (a & 0x80 ? CYC_TILE_VFLIP : 0) | (a & 0x20 ? CYC_TILE_BEHIND : 0);
         int palette = (a & 3) + 4;
         if (!cyc_render_line_sprite16(line)) {
-            cyc_render_tile(out, width, 240, cx, y, (uint16_t)(cyc_render_line_sprite_table(line) + sp[i].tile * 16),
+            cyc_render_tile(out, width, 240, cx, y, (uint16_t)(cyc_render_line_sprite_table(line) + sp->tile * 16),
                             palette, flags, opaque, NULL);
         } else {
-            uint16_t table = sp[i].tile & 1 ? 0x1000 : 0;
-            int top = sp[i].tile & 0xFE, bottom = top + 1;
+            uint16_t table = sp->tile & 1 ? 0x1000 : 0;
+            int top = sp->tile & 0xFE, bottom = top + 1;
             if (a & 0x80) { int t = top; top = bottom; bottom = t; }
             cyc_render_tile(out, width, 240, cx, y, (uint16_t)(table + top * 16), palette, flags, opaque, NULL);
             cyc_render_tile(out, width, 240, cx, y + 8, (uint16_t)(table + bottom * 16), palette, flags, opaque, NULL);
         }
-    }
+}
+static void draw_wide_sprites(uint32_t *out, int width, int play_x0, const uint8_t *opaque)
+{
+    for (int i = s_wide_n[s_wide_shown]-1; i >= 0; i--) paint_wide_sprite(out,width,play_x0,opaque,&s_wide[s_wide_shown][i]);
 }
 
 #if defined(_MSC_VER)
@@ -318,6 +366,8 @@ static void register_hooks(void)
         !nes_mod_register_function_entry_plugin(HOOK_NMI, 0xC000, nmi_latch) ||
         !nes_mod_register_function_entry_plugin(HOOK_PASS, 0xF034, begin_pass))
         fprintf(stderr, "[mm3 widescreen] cannot register hooks\n");
+    nes_mod_register_savestate_hook("mm3.widescreen",wide_get,wide_set);
+    nes_mod_register_savestate_validator("mm3.widescreen",wide_valid);
 }
 
 static void enable_hooks(bool on)
@@ -454,10 +504,10 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
             }
             int wx = screen * 256 + (cam & 255) + nx;
             line[x] = wx < sl || wx >= sr ? 0xFF000000u : level_pixel(wx, row, table, colors, &opaque[x]);
-            if (nx >= SEAM && nx < 256 && (s_sprites[y * 256 + nx] >> 24)) line[x] = s_sprites[y * 256 + nx];
+            if (!mm3_coop_enabled() && nx >= SEAM && nx < 256 && (s_sprites[y * 256 + nx] >> 24)) line[x] = s_sprites[y * 256 + nx];
         }
     }
-    draw_wide_sprites(out, width, play_x0, s_opaque);
+    if (!mm3_coop_enabled()) draw_wide_sprites(out, width, play_x0, s_opaque);
     s_win_left = left > view ? left : view;
     s_win_right = right < view + width ? right : view + width;
     s_win_valid = true;
@@ -490,8 +540,56 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
 /* ---- host ---- */
 
 static uint32_t s_character_picture[256 * 240];
+typedef struct {
+    uint32_t *out;
+    const uint8_t *opaque;
+    uint64_t body;
+    int width, origin, guest, wide;
+} SpritePaint;
+static void paint_events(SpritePaint *p, int slot)
+{
+    while (p->wide >= 0 && s_wide[s_wide_shown][p->wide].after >= slot) {
+        const WideSprite *w = &s_wide[s_wide_shown][p->wide--];
+        if (p->guest >= 0 && (p->guest > w->after || (p->guest == w->after && !w->after_body))) {
+            mm3_coop_paint(p->out,p->width,p->origin,p->opaque); p->guest = -1;
+        }
+        paint_wide_sprite(p->out,p->width,p->origin,p->opaque,w);
+    }
+    if (p->guest >= slot && p->guest >= 0) {
+        mm3_coop_paint(p->out,p->width,p->origin,p->opaque); p->guest = -1;
+    }
+}
+static int sprite_place(int slot, int x, int y, int *out_x, void *user)
+{
+    (void)y; SpritePaint *p = (SpritePaint *)user;
+    paint_events(p,slot); *out_x = p->origin + x;
+    return mm3_proto_place_sprite(slot,p->body,p->out,p->width,p->origin,p->opaque);
+}
+static void combined_sprites(uint32_t *out, int width, int origin, const uint8_t *opaque, int wide)
+{
+    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
+    cyc_render_sprites(out,width,240,origin,opaque,sprite_place,&p);
+    paint_events(&p,-1);
+}
 static int compose(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
 {
+    if (mm3_coop_enabled()) {
+        if (!cyc_render_background(s_character_picture)) return 0;
+        if (width == 256) {
+            memcpy(out,s_character_picture,sizeof s_character_picture);
+            combined_sprites(out,width,0,cyc_frame_bg_opaque(),0); return 1;
+        }
+        if (render_world(out,width,height,native_x0,s_character_picture,user)) {
+            combined_sprites(out,width,cyc_render_native_origin(width),s_opaque,1); return 1;
+        }
+        combined_sprites(s_character_picture,256,0,cyc_frame_bg_opaque(),0);
+        int left = (width-256)/2;
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) out[y*width+x] = 0xFF000000u;
+            memcpy(out+y*width+left,s_character_picture+y*256,256*sizeof *out);
+        }
+        cyc_render_set_native_origin(left); return 1;
+    }
     int changed = mm3_proto_native_picture(s_character_picture);
     if (changed) native = s_character_picture;
     if (width == 256) {
@@ -532,6 +630,8 @@ void mm3_ws_power_on(void)
     s_stage = -1;
     s_win_valid = false;
     s_wide_n[0] = s_wide_n[1] = 0;
+    memset(s_wide,0,sizeof s_wide); s_wide_cur = 0; s_wide_shown = 1;
+    s_win_left = s_win_right = 0; s_restored = 0;
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
     mm3_ws_refresh_policy();
@@ -545,10 +645,12 @@ void mm3_ws_frame_end(void)
 
 void mm3_ws_state_loaded(void)
 {
+    bool restored_window = s_restored && s_win_valid;
     s_stage = -1;
     s_win_valid = false;
-    s_wide_n[0] = s_wide_n[1] = 0;
+    if (!s_restored) s_wide_n[0] = s_wide_n[1] = 0;
     if (s_mode != NES_VIDEO_STOCK) ensure_stage();
+    s_win_valid = restored_window; s_restored = 0;
 }
 
 bool mm3_ws_set_mode(int mode)

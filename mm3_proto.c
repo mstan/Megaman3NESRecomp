@@ -222,6 +222,7 @@ static int pose_begin(uint16_t address)
 static int part_emitted(uint16_t address)
 {
     (void)address;
+    mm3_coop_primary_part();
     mm3_charge_part_emitted();
     if (!s_on || ram(0x96) != 0 || !S.building.replace) return 0;
     CycModRegs r; cyc_mod_regs(&r);
@@ -232,6 +233,7 @@ static int part_emitted(uint16_t address)
 static int pose_done(uint16_t address)
 {
     (void)address;
+    mm3_coop_primary_done();
     mm3_charge_pose_done();
     if (!s_on || ram(0x96) != 0) return 0;
     for (int slot = 0; slot < 64; slot++) if (S.building.mask & (1ull << slot))
@@ -367,6 +369,22 @@ int mm3_proto_native_picture(uint32_t *out)
     Paint paint = {out, proto ? first : -1};
     cyc_render_sprites(out, 256, 240, 0, cyc_frame_bg_opaque(), place, &paint);
     return 1;
+}
+uint64_t mm3_proto_picture_mask(void)
+{
+    BodyFrame *f = &S.shown;
+    if (!s_on || !s_loaded || ram(0xF8) == 1 || !f->replace) return 0;
+    const uint8_t *oam = cyc_render_oam();
+    for (int slot = 0; slot < 64; slot++) if ((f->mask & (1ull << slot)) && memcmp(f->oam+slot*4,oam+slot*4,4)) return 0;
+    return f->mask;
+}
+int mm3_proto_place_sprite(int slot, uint64_t body, uint32_t *out, int width, int origin, const uint8_t *opaque)
+{
+    int charge = mm3_charge_private_place(slot,out,width,origin,opaque,cyc_render_oam());
+    if (charge >= 0) return charge;
+    if (!(body & (1ull << slot))) return 1;
+    if (!(body & ((1ull << slot)-1))) mm3_proto_paint_private(out,width,origin,opaque);
+    return 0;
 }
 
 static int damage(uint16_t address)

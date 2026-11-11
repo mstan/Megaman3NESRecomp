@@ -45,6 +45,14 @@ typedef struct {
     uint64_t withdrawals[2], rejoins[2];
 } Lifecycle;
 static Lifecycle L;
+typedef struct {
+    char magic[4];
+    uint64_t mask;
+    uint8_t building[256], shown[256], cursor, seen, valid;
+    int8_t insert;
+    uint8_t building_owner, shown_owner;
+} Priority;
+static Priority P;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
 static int s_on, s_roster, s_inside, s_projectiles;
@@ -221,7 +229,9 @@ int mm3_coop_dispatch(void)
 {
     if (!s_on || s_inside || C.scope || C.ai || cyc_mod_isolated()) return 0;
     addresses();
-    if (ram(0xF8) == 1 || ram(0x50) || ram(0x30) >= 0x0C || (!C.initialized && ram(0x30) == 4)) return 0;
+    if (ram(0xF8) == 1 || ram(0x50) ||
+        (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && alive(C.anchor^1))) ||
+        (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
     L.advanced = 1;
     capture(&C.players[C.anchor]);
@@ -424,7 +434,8 @@ static void after_return(void)
 /* Graphics are captured through the native per-entity draw routine. */
 void mm3_coop_draw(void)
 {
-    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 || ram(0x30) >= 0x0C) return;
+    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 ||
+        (ram(0x30) >= 0x0C && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1, camera = ram(0xF9) * 256 + ram(0xFC);
     if (L.teleport[guest] == TELE_HIDDEN) { C.players[guest].building.count = 0; return; }
@@ -472,15 +483,46 @@ void mm3_coop_draw(void)
     } else { f->count = 0; C.failures++; }
     C.current = C.anchor; project(&C.players[C.anchor]); s_inside = 0; cyc_mod_set_regs(&original);
 }
-void mm3_coop_latch(void)
+int mm3_coop_latch(void)
 {
-    if (!s_on) return;
+    if (!s_on) return 0;
     for (int i = 0; i < 2; i++) C.players[i].shown = C.players[i].building;
+    P.valid = P.seen; P.insert = (int8_t)P.cursor;
+    P.shown_owner = P.building_owner;
+    for (int slot = 0; slot < 64; slot++) if ((P.mask & (1ull << slot)) &&
+        !memcmp(P.building + slot*4,cyc_cpu_ram() + 0x200 + slot*4,4)) P.insert = (int8_t)slot;
+    memcpy(P.shown,cyc_cpu_ram() + 0x200,sizeof P.shown);
+    return P.shown_owner;
+}
+void mm3_coop_picture_begin(void) { P.mask = 0; P.seen = 0; P.cursor = 0; P.building_owner = C.anchor; }
+void mm3_coop_primary_begin(void)
+{
+    if (!s_on || !C.initialized || s_inside || cyc_mod_isolated()) return;
+    CycModRegs r = {0}; cyc_mod_regs(&r);
+    if (!r.x && ram(0x97)) { P.seen = 1; P.cursor = (uint8_t)(ram(0x97)/4 - 1); }
+}
+void mm3_coop_primary_part(void)
+{
+    if (!s_on || s_inside || ram(0x96)) return;
+    CycModRegs r = {0}; cyc_mod_regs(&r); P.mask |= 1ull << (r.x/4);
+}
+void mm3_coop_primary_done(void)
+{
+    if (!s_on || s_inside || ram(0x96)) return;
+    for (int i = 0; i < 64; i++) if (P.mask & (1ull << i)) memcpy(P.building+i*4,cyc_cpu_ram()+0x200+i*4,4);
+}
+int mm3_coop_primary_seen(void) { return P.seen; }
+static int picture_owner(void)
+{ return P.valid && !memcmp(P.shown,cyc_render_oam(),sizeof P.shown) ? P.shown_owner : C.anchor; }
+int mm3_coop_insert_slot(void)
+{
+    return s_on && C.initialized && P.valid && C.players[picture_owner()^1].shown.count &&
+        !memcmp(P.shown,cyc_render_oam(),sizeof P.shown) ? P.insert : -1;
 }
 int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
 {
     if (!s_on || !C.initialized || ram(0xF8) == 1) return 0;
-    int owner = C.current, guest = C.anchor ^ 1;
+    int owner = C.current, guest = picture_owner() ^ 1;
     Picture *f = &C.players[guest].shown;
     if (!f->count) return 0;
     C.current = (uint8_t)guest;
@@ -508,7 +550,7 @@ int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
     C.current = (uint8_t)owner;
     return 1;
 }
-int mm3_coop_present_begin(void) { int previous = C.current; if (s_on) C.current = C.anchor; return previous; }
+int mm3_coop_present_begin(void) { int previous = C.current; if (s_on) C.current = (uint8_t)picture_owner(); return previous; }
 void mm3_coop_present_end(int previous) { C.current = (uint8_t)previous; }
 int mm3_coop_present_player(int seat) { int previous = C.current; if (seat >= 0 && seat < 2) C.current = (uint8_t)seat; return previous; }
 int mm3_coop_menu_ready(int seat)
@@ -580,7 +622,7 @@ static void enabled(int on)
 }
 void mm3_coop_power_on(void)
 {
-    memset(&C, 0, sizeof C); memset(&L, 0, sizeof L);
+    memset(&C, 0, sizeof C); memset(&L, 0, sizeof L); memset(&P,0,sizeof P);
     s_checkpoint_tables = 0;
     addresses(); mm3_coop_menu_power_on();
     if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
@@ -650,6 +692,19 @@ static int life_valid(const uint8_t *in, int size)
 }
 static int life_set(const uint8_t *in, int size)
 { if (!life_valid(in,size)) return 0; if (size) memcpy(&L,in,size); else { memset(&L,0,sizeof L); L.checkpoint = -1; } return 1; }
+static int priority_get(uint8_t *out, int cap)
+{
+    if (cap < (int)sizeof P) return -1;
+    memcpy(P.magic,"CPR1",4); memcpy(out,&P,sizeof P); return sizeof P;
+}
+static int priority_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    Priority n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    return !memcmp(n.magic,"CPR1",4) && n.cursor < 64 && n.seen <= 1 && n.valid <= 1 && n.insert >= -1 && n.insert < 64 && n.building_owner <= 1 && n.shown_owner <= 1;
+}
+static int priority_set(const uint8_t *in, int size)
+{ if (!priority_valid(in,size)) return 0; if (size) memcpy(&P,in,size); else memset(&P,0,sizeof P); return 1; }
 static void reset(void) { enabled(0); s_roster = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
@@ -682,4 +737,6 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_savestate_validator("mm3.coop", valid);
     nes_mod_register_savestate_hook("mm3.coop-lifecycle",life_get,life_set);
     nes_mod_register_savestate_validator("mm3.coop-lifecycle",life_valid);
+    nes_mod_register_savestate_hook("mm3.coop-priority",priority_get,priority_set);
+    nes_mod_register_savestate_validator("mm3.coop-priority",priority_valid);
 }

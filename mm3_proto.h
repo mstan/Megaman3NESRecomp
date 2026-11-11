@@ -18,3 +18,5 @@ int mm3_proto_muzzle_y(int native_offset);
 uint64_t mm3_proto_private_mask(void);
 void mm3_proto_paint_private(uint32_t *out, int width, int origin, const uint8_t *opaque);
 void mm3_proto_paint_portrait(uint32_t *out, int width, int x, int y, int weapon);
+uint64_t mm3_proto_picture_mask(void);
+int mm3_proto_place_sprite(int slot, uint64_t body, uint32_t *out, int width, int origin, const uint8_t *opaque);
