@@ -1,0 +1,27 @@
+# Load the current-build state at frame 7799 from boot_snake_quiet.route.
+# --charge on --mm4-donor <local verified MM4 image>; Proto may be off or on.
+# Reposition the player and mark an already-live Petit Snakey as armored.
+# Do not change target HP or death flags: its native collision must ricochet.
+7800 POKE A2 9C
+7800 HOLD 39 40
+7800 POKE 301-30F 00
+7800 POKE A0 00
+7800 POKE 30 00
+7800 POKE 360 DC
+7800 POKE 380 00
+7800 POKE 3C0 B4
+7800 POKE 3E0 00
+7800 POKE 31 01
+7800 B
+7893 -
+7893 POKE 360 38
+7893 POKE 380 01
+7893 POKE 3C0 55
+7893 POKE 3E0 00
+7893 POKE 30 01
+7893 POKE 440 00
+7893 POKE 460 00
+7893 HOLD 49E E1
+# The full shot keeps its art during native ricochet and blocks a normal shot.
+7898 B
+7901 -

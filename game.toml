@@ -765,6 +765,12 @@ bytes = "A5 32 D0 03 20 70 D3 AD"
 include_internal = true
 
 [[mod_function_hook]]
+id = "mm3.proto.muzzle"
+addr = 0xD17B
+bytes = "AD E0 03 99 E0 03 A9 00"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.proto.shield"
 addr = 0x8097
 bytes = "AD C0 05 C9 A4 F0 F8 86"

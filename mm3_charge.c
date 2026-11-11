@@ -71,7 +71,8 @@ void mm3_charge_cancel(void)
 }
 static int full_alive(void)
 {
-    for (int i = 1; i <= 3; i++) if (C.shots[i].kind == 2 && (ram(0x300 + i) & 0x80) && ram(0x320 + i) == 1) return 1;
+    for (int i = 1; i <= 3; i++) if (C.shots[i].kind == 2 && (ram(0x300 + i) & 0x80) &&
+        (ram(0x320 + i) == 1 || ram(0x320 + i) == 0x0F)) return 1;
     return 0;
 }
 static void fire(int counter)
@@ -116,7 +117,11 @@ void mm3_charge_dispatch(void)
     for (int i = 1; i <= 3; i++) {
         Shot *sh = &C.shots[i];
         if (!sh->kind) continue;
-        if (!(ram(0x300 + i) & 0x80) || ram(0x320 + i) != 1) { memset(sh, 0, sizeof *sh); continue; }
+        /* Native armor changes Buster AI to its harmless ricochet routine. The
+         * same live shot keeps MM4 art and the full-shot occupancy rule. */
+        if (!(ram(0x300 + i) & 0x80) || (ram(0x320 + i) != 1 && ram(0x320 + i) != 0x0F)) {
+            memset(sh, 0, sizeof *sh); continue;
+        }
         if (sh->kind == 2 && !sh->animation) {
             int frame = sh->frame > 5 ? 5 : sh->frame;
             poke(0x420 + i, s_speed[frame]); poke(0x400 + i, 0);

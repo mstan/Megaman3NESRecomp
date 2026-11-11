@@ -46,7 +46,8 @@ int mm3_proto_shot_limit(void) { return mm3_proto_selected() && s_real ? 2 : 3; 
 int mm3_proto_muzzle_y(int native_offset)
 {
     int offset = native_offset;
-    if (mm3_proto_selected() && !ram(0xA0)) {
+    int weapon = ram(0xA0);
+    if (mm3_proto_selected() && (!weapon || weapon == 7 || weapon == 9 || weapon == 11)) {
         int state = ram(0x30);
         offset = state == 1 ? -5 : state == 3 ? -4 : 3;
         if (!state && ram(0x5C0) >= 4 && ram(0x5C0) <= 6 && (ram(0x5A0) & 1)) offset = 2;
@@ -70,7 +71,8 @@ static int shield_up(void)
 void mm3_proto_refresh_hooks(void)
 {
     static const char *ids[] = {"mm3.proto.pose", "mm3.proto.part", "mm3.proto.pose-done", "mm3.proto.damage",
-        "mm3.proto.shots", "mm3.proto.shield", "mm3.proto.reflected-hit", "mm3.proto.menu-begin", "mm3.proto.menu-part"};
+        "mm3.proto.shots", "mm3.proto.shield", "mm3.proto.reflected-hit", "mm3.proto.menu-begin", "mm3.proto.menu-part",
+        "mm3.proto.muzzle"};
     for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++)
         nes_mod_set_function_hook_enabled(ids[i], s_on || (i < 3 && mm3_charge_available()));
 }
@@ -140,7 +142,7 @@ int mm3_proto_dispatch(void)
 void mm3_proto_frame_end(void)
 {
     for (int slot = 1; slot < 16; slot++)
-        if (!(ram(0x300 + slot) & 0x80) || ram(0x320 + slot) != 1)
+        if (!(ram(0x300 + slot) & 0x80) || (ram(0x320 + slot) != 1 && ram(0x320 + slot) != 0x0F))
             S.reflected &= (uint16_t)~(1u << slot);
     if (!s_on || !S.teleport) return;
     if (S.teleport == 16) { S.selected ^= 1; sound(0x34); }
@@ -371,9 +373,30 @@ static int shot_limit(uint16_t address)
     if (!mm3_proto_selected() || !s_real || (weapon && weapon != 7 && weapon != 9 && weapon != 11)) return 0;
     int count = 0;
     for (int slot = 1; slot < 16; slot++)
-        count += (ram(0x300 + slot) & 0x80) && ram(0x320 + slot) == 1 && !(S.reflected & (1u << slot));
+        count += (ram(0x300 + slot) & 0x80) &&
+            (ram(0x320 + slot) == 1 || (ram(0x320 + slot) == 0x0F && ram(0x5C0 + slot) == 0x18)) &&
+            !(S.reflected & (1u << slot));
     if (count < 2) return 0;
+    CycModRegs r; cyc_mod_regs(&r); r.y = 0; r.p &= (uint8_t)~1u; cyc_mod_set_regs(&r);
     S.limited++; return 1;
+}
+
+static int muzzle(uint16_t address)
+{
+    (void)address;
+    int weapon = ram(0xA0), state = ram(0x30);
+    if (!mm3_proto_selected() || (weapon && weapon != 7 && weapon != 9 && weapon != 11) ||
+        (state != 0 && state != 1 && state != 3 && state != 5)) return 0;
+    CycModRegs r; cyc_mod_regs(&r);
+    if (r.y < 1 || r.y > 3) return 0;
+    /* The native initializer has just copied X and Y; only the cannon anchor
+     * changes. Physics, facing, sound, animation and shot bookkeeping follow. */
+    int y = mm3_proto_muzzle_y(0);
+    if (ram(0x3E0) || y < 0 || y >= 240) poke(0x300 + r.y, ram(0x300 + r.y) & ~0x80u);
+    else poke(0x3C0 + r.y, y);
+    int x = ram(0x360 + r.y) + ram(0x380 + r.y) * 256 + 1;
+    poke(0x360 + r.y, x); poke(0x380 + r.y, x >> 8);
+    return 0;
 }
 
 static int shield(uint16_t address)
@@ -544,6 +567,7 @@ NES_MOD_CONSTRUCTOR(register_mm3_proto)
     nes_mod_register_function_entry_plugin("mm3.proto.pose-done", 0xF28F, pose_done);
     nes_mod_register_function_entry_plugin("mm3.proto.damage", 0x80DD, damage);
     nes_mod_register_function_entry_plugin("mm3.proto.shots", 0xD103, shot_limit);
+    nes_mod_register_function_entry_plugin("mm3.proto.muzzle", 0xD17B, muzzle);
     nes_mod_register_function_entry_plugin("mm3.proto.shield", 0x8097, shield);
     nes_mod_register_function_entry_plugin("mm3.proto.reflected-hit", 0x8102, reflected_hit);
     nes_mod_register_function_entry_plugin("mm3.proto.menu-begin", 0xA30C, menu_begin);
