@@ -9,3 +9,4 @@ void mm3_mods_frame_end(void);
 void mm3_mods_input(uint8_t buttons[2]);
 bool mm3_mods_option(const char *name, const char *value);
 void mm3_mods_tcp_setup(void);
+void mm3_mods_refresh_hooks(void);
