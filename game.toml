@@ -734,6 +734,48 @@ addr = 0xCD34
 bytes = "AD 20 04 C9 02 D0 06 A5"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.proto.pose"
+addr = 0xF1E4
+bytes = "A8 B9 00 81 85 02 B9 00"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.part"
+addr = 0xF279
+bytes = "B1 05 30 04 90 04 B0 10"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.pose-done"
+addr = 0xF28F
+bytes = "60 C8 A9 F8 9D 00 02 D0"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.damage"
+addr = 0x80DD
+bytes = "08 09 80 85 A2 28 F0 02"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.shots"
+addr = 0xD103
+bytes = "A5 32 D0 03 20 70 D3 AD"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.shield"
+addr = 0x8097
+bytes = "AD C0 05 C9 A4 F0 F8 86"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.reflected-hit"
+addr = 0x8102
+bytes = "BD 80 04 29 60 F0 39 AD"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

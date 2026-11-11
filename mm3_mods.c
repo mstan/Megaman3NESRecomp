@@ -1,5 +1,6 @@
 /* Title-owned enhancements, using the original USA cartridge's equipment data. */
 #include "mm3_mods.h"
+#include "mm3_proto.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
@@ -37,9 +38,14 @@ static void weapons_set(int on)
 {
     s_weapons = on != 0;
     W.previous = W.pending = 0;
-    nes_mod_set_function_hook_enabled(HOOK, s_weapons);
+    mm3_mods_refresh_hooks();
     /* Lift only after this title's complete simulation profile is qualified. */
     nes_mod_set_local_only("Mega Man 3 quick weapon switching", s_weapons);
+}
+
+void mm3_mods_refresh_hooks(void)
+{
+    nes_mod_set_function_hook_enabled(HOOK, s_weapons || mm3_proto_available());
 }
 
 static int equipment_tables(void)
@@ -72,6 +78,7 @@ static int player_dispatch(uint16_t address)
     (void)address;
     unsigned pressed = W.pending;
     W.pending = 0; /* Unsafe presses expire; they never apply after a lock clears. */
+    if (mm3_proto_dispatch()) return 1;
     if (!s_weapons || (pressed != CYC_GAME_L && pressed != CYC_GAME_R) ||
         !can_switch() || !equipment_tables()) return 0;
     int current = ram(0xA0);
@@ -118,13 +125,14 @@ void mm3_mods_power_on(void)
 {
     memset(&W, 0, sizeof W);
     s_tables_ready = 0;
-    nes_mod_set_function_hook_enabled(HOOK, s_weapons);
+    mm3_proto_power_on();
+    mm3_mods_refresh_hooks();
 }
-void mm3_mods_frame_end(void) { W.pending = 0; }
+void mm3_mods_frame_end(void) { W.pending = 0; mm3_proto_frame_end(); }
 
 bool mm3_mods_option(const char *name, const char *value)
 {
-    if (strcmp(name, "--weapon-cycle")) return false;
+    if (strcmp(name, "--weapon-cycle")) return mm3_proto_option(name, value);
     if (strcmp(value, "on") && strcmp(value, "off")) return false;
     weapons_set(!strcmp(value, "on"));
     return true;
@@ -168,6 +176,7 @@ static void tcp_mods(int id, const char *line)
 #endif
 void mm3_mods_tcp_setup(void)
 {
+    mm3_proto_tcp_setup();
 #ifdef CYC_WITH_SDL
     cyc_tcp_register("mm3_mods", "query current title enhancement state", tcp_mods);
 #endif

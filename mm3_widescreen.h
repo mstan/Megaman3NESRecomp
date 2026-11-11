@@ -19,3 +19,4 @@ void mm3_ws_set_check(bool enabled);
 
 /* JSON members (no braces) describing the last composed picture. */
 void mm3_ws_describe(char *out, size_t n);
+void mm3_ws_refresh_policy(void);

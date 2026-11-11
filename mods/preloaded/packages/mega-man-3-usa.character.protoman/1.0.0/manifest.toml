@@ -1,0 +1,50 @@
+format_version = 1
+id = "mega-man-3-usa.character.protoman"
+version = "1.0.0"
+name = "Proto Man"
+author = "NESRecomp; sprite sheet: Mister Man"
+description = "Play as Proto Man and swap characters with Select. Proto Man mode combines double incoming damage, an airborne front shield and two uncharged shots. Native slide remains available to both characters."
+license = "PolyForm-Noncommercial-1.0.0 (code); artwork credited in assets/CREDITS.txt"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "mega-man-3-usa"
+rom_crc32 = "603aaa57"
+
+[[feature]]
+id = "protoman"
+name = "Proto Man"
+group = "Gameplay"
+default_enabled = false
+experimental = true
+
+[[plugin]]
+feature = "protoman"
+id = "mega-man-3-usa.character.protoman"
+
+[[option]]
+feature = "protoman"
+id = "start"
+label = "Starting character"
+type = "choice"
+default = "protoman"
+[[option.choice]]
+value = "megaman"
+label = "Mega Man"
+[[option.choice]]
+value = "protoman"
+label = "Proto Man"
+
+[[option]]
+feature = "protoman"
+id = "mode"
+label = "Character behavior"
+type = "choice"
+default = "protoman"
+[[option.choice]]
+value = "protoman"
+label = "Proto Man mode"
+[[option.choice]]
+value = "megaman"
+label = "Mega Man behavior (reskin)"

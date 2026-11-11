@@ -201,7 +201,10 @@ const CycHostExtras *cyc_host_extras(void)
     static const CycHostOption options[] = {
         {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"},
         {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default fit)"},
-        {"--weapon-cycle", true, "on|off: L/R cycles acquired weapons and Rush helpers"}
+        {"--weapon-cycle", true, "on|off: L/R cycles acquired weapons and Rush helpers"},
+        {"--protoman", true, "on|off: enable character selection and solo Select exchange"},
+        {"--proto-mode", true, "protoman|megaman: character traits or normal-stat reskin"},
+        {"--proto-start", true, "protoman|megaman: starting solo character"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,

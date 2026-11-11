@@ -25,6 +25,7 @@
  * authoritative for its own 256 columns (sprites, live tile changes).
  */
 #include "mm3_widescreen.h"
+#include "mm3_proto.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -194,6 +195,7 @@ static int begin_pass(uint16_t addr)
     (void)addr;
     if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
     s_wide_n[s_wide_cur] = 0;
+    mm3_proto_draw_begin();
     return 0;
 }
 
@@ -204,6 +206,7 @@ static int nmi_latch(uint16_t addr)
     (void)addr;
     if (ram(0xEE) | ram(0x9A)) return 0;
     s_wide_shown = s_wide_cur;
+    mm3_proto_draw_latch();
     return 0;
 }
 
@@ -371,7 +374,7 @@ static int fallback(const char *why)
     return 0;
 }
 
-static int render(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
+static int render_world(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
 {
     (void)native_x0; (void)user;
     if (s_stage < 0 || s_stage != ram(0x22)) return fallback("no stage tables");
@@ -478,6 +481,33 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
 
 /* ---- host ---- */
 
+static uint32_t s_character_picture[256 * 240];
+static int render(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
+{
+    int changed = mm3_proto_native_picture(s_character_picture);
+    if (changed) native = s_character_picture;
+    if (width == 256) {
+        if (changed) memcpy(out, native, 256 * 240 * sizeof *out);
+        return changed;
+    }
+    if (render_world(out, width, height, native_x0, native, user)) return 1;
+    if (!changed) return 0;
+    int left = (width - 256) / 2;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
+        memcpy(out + y * width + left, native + y * 256, 256 * sizeof *out);
+    }
+    cyc_render_set_native_origin(left);
+    return 1;
+}
+
+void mm3_ws_refresh_policy(void)
+{
+    enable_hooks(s_mode != NES_VIDEO_STOCK || mm3_proto_available());
+    cyc_render_set_stock_compositing(mm3_proto_available());
+    cyc_render_capture_background(s_check || mm3_proto_available());
+}
+
 void mm3_ws_power_on(void)
 {
     s_stage = -1;
@@ -485,7 +515,7 @@ void mm3_ws_power_on(void)
     s_wide_n[0] = s_wide_n[1] = 0;
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
-    enable_hooks(s_mode != NES_VIDEO_STOCK);
+    mm3_ws_refresh_policy();
 }
 
 void mm3_ws_frame_end(void)
@@ -507,7 +537,7 @@ bool mm3_ws_set_mode(int mode)
     if (mode < NES_VIDEO_STOCK || mode >= NES_VIDEO_MODE_COUNT) return false;
     s_mode = mode;
     cyc_video_set_mode(mode);
-    enable_hooks(mode != NES_VIDEO_STOCK);
+    mm3_ws_refresh_policy();
     return true;
 }
 
@@ -523,7 +553,7 @@ void mm3_ws_set_check(bool enabled)
 {
     s_check = enabled;
     s_check_bad = -1; s_check_total = 0;
-    cyc_render_capture_background(enabled);
+    cyc_render_capture_background(enabled || mm3_proto_available());
 }
 
 void mm3_ws_save_setting(FILE *f) { fprintf(f, "Widescreen = %s\n", nes_video_geometry_name(s_mode)); }

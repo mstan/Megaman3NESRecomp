@@ -179,3 +179,11 @@ Cycle Windows builds use `tools/build.ps1 -Rom <original-ROM>`. Create a ROM-fre
 ZIP with `tools/make_release.ps1 -Rom <original-ROM>`; `-SkipBuild -BuildDir
 build-cycle` packages an existing production cycle build. Legacy C remains
 available through explicit CMake selection.
+
+The cycle build includes optional Proto Man and L/R weapon switching in Mods.
+Select swaps playable characters with a short teleport. Proto Man defaults to
+his own traits: two normal shots, double incoming damage, and an airborne front
+shield that reflects supported small projectiles. The character mod also offers
+Mega Man behavior as a visual reskin. Native sliding and the original weapons
+remain available. The current adapters are restricted to local single-player
+until the complete co-op and online simulation profile is qualified.

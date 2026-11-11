@@ -20,6 +20,14 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         message(FATAL_ERROR "Set NESRECOMP_ROM to the original ROM image for this title")
     endif()
     find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+    set(_proto_assets "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded/packages/mega-man-3-usa.character.protoman/1.0.0/assets")
+    file(READ "${_proto_assets}/protoman.png" MM3_PROTO_PNG_BYTES HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1,\n" MM3_PROTO_PNG_BYTES "${MM3_PROTO_PNG_BYTES}")
+    file(READ "${_proto_assets}/jump-open.png" MM3_PROTO_JUMP_PNG_BYTES HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1,\n" MM3_PROTO_JUMP_PNG_BYTES "${MM3_PROTO_JUMP_PNG_BYTES}")
+    configure_file(mm3_proto_sheet.h.in "${CMAKE_CURRENT_BINARY_DIR}/mm3_proto_sheet.h" @ONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${_proto_assets}/protoman.png" "${_proto_assets}/jump-open.png")
     execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_usa_rom.py"
         --rom "${NESRECOMP_ROM}" --crc 603AAA57 --mapper 4 --title "Mega Man III"
         RESULT_VARIABLE _usa_rom_result)
@@ -38,8 +46,10 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         PLAYERS 1
         MODS
         HOST_EXTRAS "${CMAKE_CURRENT_SOURCE_DIR}/cycle_extras.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_widescreen.c"
-            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_proto.c"
+            "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c"
         BOXART "${CMAKE_CURRENT_SOURCE_DIR}/boxart.tga")
+    target_include_directories(MegaMan3Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")
     add_custom_command(TARGET MegaMan3Recomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded" "$<TARGET_FILE_DIR:MegaMan3Recomp>/mods")

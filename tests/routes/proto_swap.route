@@ -1,0 +1,15 @@
+# Current-build Snake Man snapshot after7799, Proto enabled in real mode,
+# starting as Mega Man; Buster selected. Position/protection only, no success flags.
+7800 POKE A2 9C
+7800 POKE A3 87
+7800 POKE A4 80
+7800 HOLD 39 40
+7800 SELECT
+7801 -
+# At7835: Proto Man, teleport complete, HP28, partial/empty ammo preserved.
+7860 SELECT
+7861 -
+# At7895: Mega Man, same persistent state.
+7920 SELECT
+7921 -
+# At7955: Proto Man again. Held Select cannot repeat the exchange.
