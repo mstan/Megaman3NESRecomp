@@ -347,7 +347,9 @@ static void collision(int kind, unsigned entry)
         int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31);
         capture_combat(&C.players[C.current]); C.contacts[C.current]++;
         int guest = C.current;
-        C.current = C.scope_owner; project(&C.players[C.current]);
+        C.current = C.scope_owner;
+        if (C.ai && C.current != C.anchor) project_combat(&C.players[C.current]);
+        else project(&C.players[C.current]);
         if (victory) {
             /* The real guest hit ran the one native boss-death routine. Let
              * the native main player own its subsequent victory coroutine. */
@@ -362,7 +364,11 @@ static void collision(int kind, unsigned entry)
     /* Refights create their unique victory/orb actors in personal slots. They
      * need explicit one-owner transfer before this shared call can admit them. */
     if (kind == 2 && ram(0x320 + r.x) >= 0xA0 && ram(0x22) == 0x0F) return;
-    capture(&C.players[C.current]); C.scope_owner = C.current; C.original = r;
+    /* Nearest-player AI borrows personal combat RAM without taking native
+     * presentation ownership. Its collision must preserve that distinction. */
+    if (C.ai && C.current != C.anchor) capture_combat(&C.players[C.current]);
+    else capture(&C.players[C.current]);
+    C.scope_owner = C.current; C.original = r;
     memcpy(C.scratch, cyc_cpu_ram(), sizeof C.scratch);
     C.current ^= 1; project_combat(&C.players[C.current]); C.scope = (uint8_t)kind;
     unsigned ret = entry - 1;
