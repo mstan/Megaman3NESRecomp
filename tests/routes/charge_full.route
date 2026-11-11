@@ -1,0 +1,16 @@
+# --extra-scanlines 0, weapon-cycle on, protoman on, proto-start megaman,
+# charge on, verified --mm4-donor. Save at7848/7892/7893 to check continuation.
+# Native input sampling puts counter92 at7892; release at7893 fires a full shot.
+INCLUDE boot_snake_quiet.route
+7800 POKE A2 9C
+7800 HOLD 39 40
+7800 POKE 301-30F 00
+7800 POKE A0 00
+7800 POKE 30 00
+7800 POKE 360 DC
+7800 POKE 380 00
+7800 POKE 3C0 B4
+7800 POKE 3E0 00
+7800 POKE 31 01
+7800 B
+7893 -

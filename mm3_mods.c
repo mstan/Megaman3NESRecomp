@@ -1,6 +1,7 @@
 /* Title-owned enhancements, using the original USA cartridge's equipment data. */
 #include "mm3_mods.h"
 #include "mm3_proto.h"
+#include "mm3_charge.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
@@ -45,7 +46,7 @@ static void weapons_set(int on)
 
 void mm3_mods_refresh_hooks(void)
 {
-    nes_mod_set_function_hook_enabled(HOOK, s_weapons || mm3_proto_available());
+    nes_mod_set_function_hook_enabled(HOOK, s_weapons || mm3_proto_available() || mm3_charge_available());
 }
 
 static int equipment_tables(void)
@@ -73,12 +74,11 @@ static int can_switch(void)
         (state <= 3 || state == 5);
 }
 
-static int player_dispatch(uint16_t address)
+static int weapon_dispatch(uint16_t address)
 {
     (void)address;
     unsigned pressed = W.pending;
     W.pending = 0; /* Unsafe presses expire; they never apply after a lock clears. */
-    if (mm3_proto_dispatch()) return 1;
     if (!s_weapons || (pressed != CYC_GAME_L && pressed != CYC_GAME_R) ||
         !can_switch() || !equipment_tables()) return 0;
     int current = ram(0xA0);
@@ -111,6 +111,14 @@ static int player_dispatch(uint16_t address)
     return 0;
 }
 
+static int player_dispatch(uint16_t address)
+{
+    if (mm3_proto_dispatch()) { mm3_charge_cancel(); W.pending = 0; return 1; }
+    weapon_dispatch(address);
+    mm3_charge_dispatch();
+    return 0;
+}
+
 void mm3_mods_input(uint8_t buttons[2])
 {
     (void)buttons;
@@ -126,13 +134,14 @@ void mm3_mods_power_on(void)
     memset(&W, 0, sizeof W);
     s_tables_ready = 0;
     mm3_proto_power_on();
+    mm3_charge_power_on();
     mm3_mods_refresh_hooks();
 }
-void mm3_mods_frame_end(void) { W.pending = 0; mm3_proto_frame_end(); }
+void mm3_mods_frame_end(void) { W.pending = 0; mm3_proto_frame_end(); mm3_charge_frame_end(); }
 
 bool mm3_mods_option(const char *name, const char *value)
 {
-    if (strcmp(name, "--weapon-cycle")) return mm3_proto_option(name, value);
+    if (strcmp(name, "--weapon-cycle")) return mm3_charge_option(name, value) || mm3_proto_option(name, value);
     if (strcmp(value, "on") && strcmp(value, "off")) return false;
     weapons_set(!strcmp(value, "on"));
     return true;
@@ -177,6 +186,7 @@ static void tcp_mods(int id, const char *line)
 void mm3_mods_tcp_setup(void)
 {
     mm3_proto_tcp_setup();
+    mm3_charge_tcp_setup();
 #ifdef CYC_WITH_SDL
     cyc_tcp_register("mm3_mods", "query current title enhancement state", tcp_mods);
 #endif

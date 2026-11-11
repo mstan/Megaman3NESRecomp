@@ -776,6 +776,30 @@ addr = 0x8102
 bytes = "BD 80 04 29 60 F0 39 AD"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.charge.damage"
+addr = 0x81C9
+bytes = "B0 02 A9 00 9D E0 04 D0"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.charge.pierce"
+addr = 0x8239
+bytes = "99 00 03 A5 A0 C9 01 D0"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.menu-begin"
+addr = 0xA30C
+bytes = "A5 B4 D0 37 A2 1C A5 A1"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.proto.menu-part"
+addr = 0xA341
+bytes = "CA CA CA CA 10 D9 A5 A1"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

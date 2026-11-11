@@ -6,6 +6,7 @@
 #include "cyc_video.h"
 #include "mm3_widescreen.h"
 #include "mm3_mods.h"
+#include "mm3_charge.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -195,6 +196,10 @@ static void input(void *ctx, uint8_t buttons[2])
     (void)ctx;
     mm3_mods_input(buttons);
 }
+static void audio_mix(void *ctx, int16_t *samples, size_t count)
+{
+    (void)ctx; mm3_charge_audio_mix(samples, count);
+}
 
 const CycHostExtras *cyc_host_extras(void)
 {
@@ -204,13 +209,16 @@ const CycHostExtras *cyc_host_extras(void)
         {"--weapon-cycle", true, "on|off: L/R cycles acquired weapons and Rush helpers"},
         {"--protoman", true, "on|off: enable character selection and solo Select exchange"},
         {"--proto-mode", true, "protoman|megaman: character traits or normal-stat reskin"},
-        {"--proto-start", true, "protoman|megaman: starting solo character"}
+        {"--proto-start", true, "protoman|megaman: starting solo character"},
+        {"--charge", true, "on|off: optional MM4 charged Mega Buster"},
+        {"--mm4-donor", true, "FILE: verified local Mega Man 4 (USA) source image"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,
         .frame_begin = begin, .frame_end = end, .state_loaded = state_loaded,
         .options = options, .option_count = sizeof options / sizeof options[0], .option = option,
         .input = input, .input_profile = &mm3_input_profile,
+        .audio_rate = 48000, .audio_mix = audio_mix,
 #ifdef CYC_WITH_RECOMP_UI
         .menu_items = menu_items, .menu_item_count = 2, .menu_callbacks = &menu_callbacks,
 #endif

@@ -1,0 +1,10 @@
+# Same fixture/profile as charge_full; real Select then real native Start.
+# Safe player preconditions do not set the menu's state or any result flags.
+INCLUDE boot_snake_quiet.route
+7800 SELECT
+7801 -
+7840 HOLD 39 40
+7840 POKE 30 00
+7840 POKE 3D 00
+7840 START
+7850 -

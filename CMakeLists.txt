@@ -47,7 +47,11 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         MODS
         HOST_EXTRAS "${CMAKE_CURRENT_SOURCE_DIR}/cycle_extras.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_widescreen.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_proto.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_charge.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c"
+            "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_charge_data.c"
+            "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_donor.c"
+            "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_audio.c"
         BOXART "${CMAKE_CURRENT_SOURCE_DIR}/boxart.tga")
     target_include_directories(MegaMan3Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")
     add_custom_command(TARGET MegaMan3Recomp POST_BUILD

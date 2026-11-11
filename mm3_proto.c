@@ -1,5 +1,6 @@
 /* Playable character state; native actors, physics and animation remain authoritative. */
 #include "mm3_proto.h"
+#include "mm3_charge.h"
 #include "mm3_mods.h"
 #include "mm3_widescreen.h"
 #include "mm3_proto_sheet.h"
@@ -19,7 +20,7 @@
 typedef struct {
     uint64_t mask;
     int16_t x, y;
-    uint8_t pose, right, behind, weapon, replace, clip;
+    uint8_t pose, right, behind, weapon, replace, clip, charge;
     uint8_t oam[256];
 } BodyFrame;
 typedef struct {
@@ -30,6 +31,9 @@ typedef struct {
     BodyFrame building, shown;
 } ProtoState;
 static ProtoState S;
+typedef struct { uint8_t mask, selected, weapon; int16_t y; uint8_t oam[16]; } MenuFrame;
+typedef struct { char magic[4]; uint8_t enabled; MenuFrame building, shown; } MenuState;
+static MenuState M;
 static CycProtoAtlas s_atlas;
 static int s_on, s_real = 1, s_start = 1, s_loaded;
 
@@ -38,6 +42,17 @@ static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v)
 int mm3_proto_available(void) { return s_on; }
 int mm3_proto_selected(void) { return s_on && S.selected; }
 int mm3_proto_teleporting(void) { return s_on && S.teleport; }
+int mm3_proto_shot_limit(void) { return mm3_proto_selected() && s_real ? 2 : 3; }
+int mm3_proto_muzzle_y(int native_offset)
+{
+    int offset = native_offset;
+    if (mm3_proto_selected() && !ram(0xA0)) {
+        int state = ram(0x30);
+        offset = state == 1 ? -5 : state == 3 ? -4 : 3;
+        if (!state && ram(0x5C0) >= 4 && ram(0x5C0) <= 6 && (ram(0x5A0) & 1)) offset = 2;
+    }
+    return ram(0x3C0) + offset;
+}
 
 static void sound(unsigned id)
 {
@@ -52,6 +67,13 @@ static int shield_up(void)
     return mm3_proto_selected() && s_real && !S.teleport && ram(0x30) == 1 && !ram(0x32);
 }
 
+void mm3_proto_refresh_hooks(void)
+{
+    static const char *ids[] = {"mm3.proto.pose", "mm3.proto.part", "mm3.proto.pose-done", "mm3.proto.damage",
+        "mm3.proto.shots", "mm3.proto.shield", "mm3.proto.reflected-hit", "mm3.proto.menu-begin", "mm3.proto.menu-part"};
+    for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++)
+        nes_mod_set_function_hook_enabled(ids[i], s_on || (i < 3 && mm3_charge_available()));
+}
 static void set_enabled(int enabled)
 {
     if (enabled && !s_loaded) {
@@ -63,9 +85,7 @@ static void set_enabled(int enabled)
         s_loaded = 1;
     }
     s_on = enabled != 0;
-    static const char *ids[] = {"mm3.proto.pose", "mm3.proto.part", "mm3.proto.pose-done", "mm3.proto.damage",
-        "mm3.proto.shots", "mm3.proto.shield", "mm3.proto.reflected-hit"};
-    for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++) nes_mod_set_function_hook_enabled(ids[i], s_on);
+    mm3_proto_refresh_hooks();
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
     nes_mod_set_local_only("Mega Man 3 Proto Man", s_on);
 }
@@ -73,17 +93,42 @@ static void set_enabled(int enabled)
 void mm3_proto_power_on(void)
 {
     memset(&S, 0, sizeof S);
+    memset(&M, 0, sizeof M);
     S.selected = s_on && s_start;
     set_enabled(s_on);
+}
+
+static int cancel_slide_if_clear(void)
+{
+    CycModRegs r; cyc_mod_regs(&r); r.x = 0; r.y = 1;
+    if (!cyc_mod_isolate_begin()) return 0;
+    /* Use the exact standing-height test and exit routine used by native slide. */
+    int ok = cyc_mod_call(0xE8D6, &r) && !(ram(0x10) & 0x10);
+    uint8_t player[24], state = 0, timer = 0;
+    if (ok) {
+        r.x = 0;
+        ok = cyc_mod_call(0xD455, &r);
+        if (ok) {
+            for (int field = 0; field < 24; field++) player[field] = ram(0x300 + field * 32);
+            state = ram(0x30); timer = ram(0x33);
+        }
+    }
+    cyc_mod_isolate_end();
+    if (ok) {
+        for (int field = 0; field < 24; field++) poke(0x300 + field * 32, player[field]);
+        poke(0x30, state); poke(0x33, timer);
+    }
+    return ok;
 }
 
 int mm3_proto_dispatch(void)
 {
     if (!s_on) return 0;
     int state = ram(0x30);
-    /* Native slide geometry must clear before changing the body's presentation. */
+    /* Select expires under a low ceiling; an open slide uses its native exit. */
     if (!S.teleport && (ram(0x14) & 0x20) && (ram(0xA2) & 31) &&
-        !ram(0x50) && !ram(0x3D) && ram(0xF8) != 1 && (state == 0 || state == 1 || state == 3 || state == 5)) {
+        !ram(0x50) && !ram(0x3D) && ram(0xF8) != 1 &&
+        (state <= 3 || state == 5) && (state != 2 || cancel_slide_if_clear())) {
         S.teleport = 1; S.invincible = ram(0x39);
         poke(0x32, 0); poke(0xB5, 0); sound(0x34);
     }
@@ -135,9 +180,11 @@ static int body_pose(int native_definition)
         CYC_PROTO_IDLE0 + ((ram(0x95) >> 3) & 3);
 }
 
-void mm3_proto_draw_begin(void) { memset(&S.building, 0, sizeof S.building); }
+void mm3_proto_draw_begin(void) { memset(&S.building, 0, sizeof S.building); mm3_charge_draw_begin(); }
 void mm3_proto_draw_latch(void)
 {
+    mm3_charge_draw_latch();
+    M.shown = M.building;
     S.shown = S.building;
     /* Menus also DMA OAM, without running the stage's entity drawing pass. */
     for (int slot = 0; slot < 64; slot++) if (S.shown.mask & (1ull << slot))
@@ -149,6 +196,7 @@ void mm3_proto_draw_latch(void)
 static int pose_begin(uint16_t address)
 {
     (void)address;
+    mm3_charge_pose_begin();
     if (!s_on || ram(0x96) != 0) return 0;
     CycModRegs r; cyc_mod_regs(&r);
     BodyFrame *f = &S.building;
@@ -160,6 +208,7 @@ static int pose_begin(uint16_t address)
     if (ram(0x30) == 3 && !ram(0x32)) f->right = ram(0x5A0) & 1;
     f->behind = (ram(0x580) & 0x20) != 0;
     f->weapon = ram(0xA0);
+    f->charge = (uint8_t)mm3_charge_counter();
     f->clip = ram(0x22) == 8 && (ram(0xF9) == 0x15 || ram(0xF9) == 0x1A) ? 0xB0 : 240;
     if (S.teleport) f->y -= (S.teleport <= 16 ? S.teleport - 1 : 32 - S.teleport) * 16;
     return 0;
@@ -168,6 +217,7 @@ static int pose_begin(uint16_t address)
 static int part_emitted(uint16_t address)
 {
     (void)address;
+    mm3_charge_part_emitted();
     if (!s_on || ram(0x96) != 0 || !S.building.replace) return 0;
     CycModRegs r; cyc_mod_regs(&r);
     S.building.mask |= 1ull << (r.x / 4);
@@ -177,6 +227,7 @@ static int part_emitted(uint16_t address)
 static int pose_done(uint16_t address)
 {
     (void)address;
+    mm3_charge_pose_done();
     if (!s_on || ram(0x96) != 0) return 0;
     for (int slot = 0; slot < 64; slot++) if (S.building.mask & (1ull << slot))
         memcpy(S.building.oam + slot * 4, cyc_cpu_ram() + 0x200 + slot * 4, 4);
@@ -184,7 +235,7 @@ static int pose_done(uint16_t address)
 }
 
 typedef struct { uint32_t *out; int anchor; } Paint;
-static uint32_t color(uint32_t c, int weapon)
+static uint32_t color(uint32_t c, int weapon, int charge)
 {
     if (weapon) {
         unsigned r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
@@ -192,7 +243,63 @@ static uint32_t color(uint32_t c, int weapon)
         if (r == g && g == b && r > 32 && r < 240) return cyc_render_color(18);
         if (r > 64 && r > g + b) return cyc_render_color(19);
     }
+    if (!weapon && charge >= 32) {
+        static const uint8_t full_phase[] = {0, 1, 2, 1};
+        int phase = charge >= 92 ? full_phase[(charge >> 1) & 3] : (charge >> 1) & 1;
+        unsigned r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+        if (!(c & 0xFFFFFFu)) {
+            if (phase == 1) c = cyc_render_color_value(0x04);
+            else if (phase == 2) c = cyc_render_color_value(0x18);
+        } else if (phase == 2) {
+            if (r > 64 && r > g + b) c = cyc_render_color_value(0x28);
+            else if (r == g && g == b && r > 32 && r < 240) c = cyc_render_color_value(0x39);
+        }
+    }
     return c;
+}
+
+static int menu_begin(uint16_t address)
+{
+    (void)address;
+    memset(&M.building, 0, sizeof M.building);
+    M.building.selected = (uint8_t)mm3_proto_selected();
+    M.building.weapon = ram(0xA0);
+    M.building.y = (int16_t)(ram(0x51) + 9); /* native head OAM Y=8+menu scroll, physical Y+1 */
+    return 0;
+}
+static int menu_part(uint16_t address)
+{
+    (void)address;
+    if (!M.building.selected || ram(0xB4)) return 0;
+    CycModRegs r; cyc_mod_regs(&r);
+    if (r.x > 12 || (r.x & 3)) return 0; /* keep the native E-Tank sprites */
+    static const uint8_t attrs[] = {2, 0x42, 1, 0x41};
+    int slot = r.x / 4, y = ram(0x51) + (slot < 2 ? 8 : 16);
+    if (y >= 240) return 0;
+    const uint8_t expected[] = {(uint8_t)y, slot < 2 ? 0xF3 : 0xF4, attrs[slot], (uint8_t)(0xD0 + (slot & 1) * 8)};
+    if (memcmp(cyc_cpu_ram() + 0x200 + r.x, expected, 4)) return 0;
+    M.building.mask |= (uint8_t)(1u << slot);
+    memcpy(M.building.oam + r.x, expected, 4);
+    return 0;
+}
+static int menu_ready(void)
+{
+    if (!s_on || !s_loaded || ram(0xF8) != 1 || !M.shown.selected || !M.shown.mask) return 0;
+    for (int i = 0; i < 4; i++) if (M.shown.mask & (1u << i))
+        if (memcmp(M.shown.oam + i * 4, cyc_render_oam() + i * 4, 4)) return 0;
+    return 1;
+}
+static int menu_place(int slot, uint32_t *out)
+{
+    if (slot >= 4 || !(M.shown.mask & (1u << slot)) || !menu_ready()) return -1;
+    for (int i = 0; i < slot; i++) if (M.shown.mask & (1u << i)) return 0;
+    for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) {
+        uint32_t c = s_atlas.portrait[y * 16 + x];
+        int py = M.shown.y + y;
+        if (!c || py < 0 || py >= 240 || !(cyc_render_line_mask(py) & 0x10)) continue;
+        out[py * 256 + 0xD0 + x] = color(c, M.shown.weapon, 0);
+    }
+    return 0;
 }
 
 static int place(int slot, int x, int y, int *out_x, void *context)
@@ -201,6 +308,11 @@ static int place(int slot, int x, int y, int *out_x, void *context)
     Paint *paint = (Paint *)context;
     BodyFrame *f = &S.shown;
     *out_x = x;
+    int charge = mm3_charge_place(slot, paint->out);
+    if (charge >= 0) return charge;
+    int portrait = menu_place(slot, paint->out);
+    if (portrait >= 0) return portrait;
+    if (paint->anchor < 0) return 1;
     if (!(f->mask & (1ull << slot))) return 1;
     if (slot != paint->anchor) return 0;
     const CycProtoPose *p = &s_atlas.poses[f->pose];
@@ -209,11 +321,11 @@ static int place(int slot, int x, int y, int *out_x, void *context)
         int index = p->pixels[sy * 32 + sx];
         if (!index) continue;
         int dx = f->x + (f->right ? p->origin_x - sx - 1 : sx - p->origin_x);
-        int dy = f->y + p->top_y + sy;
+        int dy = f->y + 1 + p->top_y + sy;
         if (dx < 0 || dx >= 256 || dy < 0 || dy >= f->clip) continue;
         if (!(cyc_render_line_mask(dy) & 0x10) || (dx < 8 && !(cyc_render_line_mask(dy) & 4))) continue;
         if (f->behind && opaque[dy * 256 + dx]) continue;
-        paint->out[dy * 256 + dx] = color(s_atlas.colors[index - 1], f->weapon);
+        paint->out[dy * 256 + dx] = color(s_atlas.colors[index - 1], f->weapon, f->charge);
     }
     return 0;
 }
@@ -221,15 +333,18 @@ static int place(int slot, int x, int y, int *out_x, void *context)
 int mm3_proto_native_picture(uint32_t *out)
 {
     BodyFrame *f = &S.shown;
-    if (!s_on || !s_loaded || !f->replace || !f->mask) return 0;
+    int proto = s_on && s_loaded && ram(0xF8) != 1 && f->replace && f->mask;
+    int charge = mm3_charge_draw_ready();
+    int menu = menu_ready();
+    if (!proto && !charge && !menu) return 0;
     const uint8_t *oam = cyc_render_oam();
     int first = 64;
-    for (int slot = 0; slot < 64; slot++) if (f->mask & (1ull << slot)) {
-        if (memcmp(f->oam + slot * 4, oam + slot * 4, 4)) return 0;
+    for (int slot = 0; proto && slot < 64; slot++) if (f->mask & (1ull << slot)) {
+        if (memcmp(f->oam + slot * 4, oam + slot * 4, 4)) { proto = 0; break; }
         if (slot < first) first = slot;
     }
     if (!cyc_render_background(out)) return 0;
-    Paint paint = {out, first};
+    Paint paint = {out, proto ? first : -1};
     cyc_render_sprites(out, 256, 240, 0, cyc_frame_bg_opaque(), place, &paint);
     return 1;
 }
@@ -339,7 +454,7 @@ static int reflected_hit(uint16_t address)
 static int state_get(uint8_t *out, int cap)
 {
     if (cap < sizeof S) return -1;
-    memcpy(S.magic, "MP01", 4); S.enabled = (uint8_t)s_on; S.real = (uint8_t)s_real;
+    memcpy(S.magic, "MP02", 4); S.enabled = (uint8_t)s_on; S.real = (uint8_t)s_real;
     memcpy(out, &S, sizeof S); return sizeof S;
 }
 static int state_valid(const uint8_t *in, int len)
@@ -348,14 +463,37 @@ static int state_valid(const uint8_t *in, int len)
     ProtoState next;
     if (!in || len != sizeof next) return 0;
     memcpy(&next, in, sizeof next);
-    return !memcmp(next.magic, "MP01", 4) && next.enabled == s_on && next.real == s_real &&
+    return !memcmp(next.magic, "MP02", 4) && next.enabled == s_on && next.real == s_real &&
         next.selected <= 1 && next.teleport <= 32 && next.shown.pose < CYC_PROTO_POSE_COUNT &&
-        next.building.pose < CYC_PROTO_POSE_COUNT && next.shown.right <= 1 && next.building.right <= 1;
+        next.building.pose < CYC_PROTO_POSE_COUNT && next.shown.right <= 1 && next.building.right <= 1 &&
+        next.building.behind <= 1 && next.shown.behind <= 1 && next.building.replace <= 1 && next.shown.replace <= 1 &&
+        next.building.clip <= 240 && next.shown.clip <= 240 && next.building.charge < 100 && next.shown.charge < 100;
 }
 static int state_set(const uint8_t *in, int len)
 {
     if (!state_valid(in, len)) return 0;
     if (len) memcpy(&S, in, sizeof S); else memset(&S, 0, sizeof S);
+    return 1;
+}
+static int menu_state_get(uint8_t *out, int capacity)
+{
+    if (capacity < (int)sizeof M) return -1;
+    memcpy(M.magic, "MM01", 4); M.enabled = (uint8_t)s_on;
+    memcpy(out, &M, sizeof M); return sizeof M;
+}
+static int menu_state_valid(const uint8_t *in, int size)
+{
+    if (!size) return !s_on;
+    MenuState next; if (!in || size != (int)sizeof next) return 0;
+    memcpy(&next, in, sizeof next);
+    return !memcmp(next.magic, "MM01", 4) && next.enabled == s_on &&
+        !(next.building.mask & 0xF0) && !(next.shown.mask & 0xF0) && next.building.selected <= 1 && next.shown.selected <= 1 &&
+        next.building.weapon < 12 && next.shown.weapon < 12;
+}
+static int menu_state_set(const uint8_t *in, int size)
+{
+    if (!menu_state_valid(in, size)) return 0;
+    if (size) memcpy(&M, in, size); else memset(&M, 0, sizeof M);
     return 1;
 }
 static void reset(void) { set_enabled(0); s_real = s_start = 1; }
@@ -408,8 +546,12 @@ NES_MOD_CONSTRUCTOR(register_mm3_proto)
     nes_mod_register_function_entry_plugin("mm3.proto.shots", 0xD103, shot_limit);
     nes_mod_register_function_entry_plugin("mm3.proto.shield", 0x8097, shield);
     nes_mod_register_function_entry_plugin("mm3.proto.reflected-hit", 0x8102, reflected_hit);
+    nes_mod_register_function_entry_plugin("mm3.proto.menu-begin", 0xA30C, menu_begin);
+    nes_mod_register_function_entry_plugin("mm3.proto.menu-part", 0xA341, menu_part);
     nes_mod_register_reset_callback(reset);
     nes_mod_register_activation_plugin("mega-man-3-usa.character.protoman", activate);
     nes_mod_register_savestate_hook("mm3.protoman", state_get, state_set);
     nes_mod_register_savestate_validator("mm3.protoman", state_valid);
+    nes_mod_register_savestate_hook("mm3.proto-menu", menu_state_get, menu_state_set);
+    nes_mod_register_savestate_validator("mm3.proto-menu", menu_state_valid);
 }

@@ -12,3 +12,6 @@ void mm3_proto_draw_begin(void);
 void mm3_proto_draw_latch(void);
 int mm3_proto_native_picture(uint32_t *out);
 void mm3_proto_tcp_setup(void);
+void mm3_proto_refresh_hooks(void);
+int mm3_proto_shot_limit(void);
+int mm3_proto_muzzle_y(int native_offset);

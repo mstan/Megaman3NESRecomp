@@ -26,6 +26,7 @@
  */
 #include "mm3_widescreen.h"
 #include "mm3_proto.h"
+#include "mm3_charge.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -503,9 +504,10 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
 
 void mm3_ws_refresh_policy(void)
 {
-    enable_hooks(s_mode != NES_VIDEO_STOCK || mm3_proto_available());
-    cyc_render_set_stock_compositing(mm3_proto_available());
-    cyc_render_capture_background(s_check || mm3_proto_available());
+    int characters = mm3_proto_available() || mm3_charge_available();
+    enable_hooks(s_mode != NES_VIDEO_STOCK || characters);
+    cyc_render_set_stock_compositing(characters);
+    cyc_render_capture_background(s_check || characters);
 }
 
 void mm3_ws_power_on(void)
@@ -529,7 +531,7 @@ void mm3_ws_state_loaded(void)
     s_stage = -1;
     s_win_valid = false;
     s_wide_n[0] = s_wide_n[1] = 0;
-    ensure_stage();
+    if (s_mode != NES_VIDEO_STOCK) ensure_stage();
 }
 
 bool mm3_ws_set_mode(int mode)
@@ -553,7 +555,7 @@ void mm3_ws_set_check(bool enabled)
 {
     s_check = enabled;
     s_check_bad = -1; s_check_total = 0;
-    cyc_render_capture_background(enabled || mm3_proto_available());
+    cyc_render_capture_background(enabled || mm3_proto_available() || mm3_charge_available());
 }
 
 void mm3_ws_save_setting(FILE *f) { fprintf(f, "Widescreen = %s\n", nes_video_geometry_name(s_mode)); }
