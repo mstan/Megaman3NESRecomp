@@ -807,6 +807,36 @@ bytes = "CA CA CA CA 10 D9 A5 A1"
 include_internal = true
 
 [[mod_function_hook]]
+id = "mm3.coop.boss-exit"
+addr = 0xCB5B
+bytes = "A9 00 85 EE 85 71 85 72"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.game-over"
+addr = 0xCBB1
+bytes = "A9 00 85 EE 85 5A 85 71"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.stage-clear"
+addr = 0xCBCE
+bytes = "48 A9 00 85 5A 85 74 85"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.horizontal"
+addr = 0xE2A5
+bytes = "A5 00 85 2A B9 41 AA 29"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.vertical"
+addr = 0xE372
+bytes = "85 23 A9 00 8D E0 03 A2"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.coop.pool-end"
 addr = 0x8014
 bytes = "A0 01 E4 5B F0 46 C8 E4"

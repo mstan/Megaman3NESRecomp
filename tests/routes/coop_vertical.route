@@ -1,0 +1,19 @@
+# Current-build prerequisite: Snake Man co-op gameplay at frame7799.
+# This is a boundary fixture, not an authored ladder traversal assertion.
+# Use --coop-test-poke at7800 to put P1 in native ladder state3 at
+# world904/y6, Y speed$014C, animation$0A. P2 starts elsewhere in the room.
+# Give the seats distinct HP/ammo; do not set destination or success flags.
+# The real link check, native vertical coroutine, streaming, mirroring,
+# destination load and collision must take both bodies to room1/page4.
+# Save at7840 during the real scroll. Compare native/interpreter and cold
+# state, RAM, presented pixels and PCM continuation.
+7800 POKE F9 03
+7800 POKE FC 00
+7800 POKE FA 00
+7800 POKE 2A 23
+7800 POKE 2B 00
+7800 POKE 2C 03
+7800 POKE 2D 03
+7800 1:UP
+7800 2:-
+7803 1:-

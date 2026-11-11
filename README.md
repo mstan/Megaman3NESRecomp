@@ -216,5 +216,9 @@ native teleport animation and movement, with contact protection during arrival.
 Co-op sprites follow the scene's native drawing order, including enemies in the
 widened margins. Captured sprites retain their character owner across the death
 handoff, and current-build states include the margin sprites and view bounds.
+Native horizontal shutters and vertical scrolls carry the partner through the
+same camera coroutine while preserving personal HP and ammo. The Snake Man
+route has been checked from native checkpoint retry through player-two damage,
+boss defeat, weapon award, password screen and entry into the next stage.
 This remains a development slice: boss/script and transition coverage, full
 lifecycle/camera behavior and online qualification are pending.

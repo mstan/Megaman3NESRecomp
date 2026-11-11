@@ -53,6 +53,16 @@ typedef struct {
     uint8_t building_owner, shown_owner;
 } Priority;
 static Priority P;
+/* These are the original camera coroutine's entry/return boundaries. Follow
+ * only its native motion; health, inventory and character state stay personal. */
+typedef struct {
+    char magic[4];
+    uint8_t active, priming, stack, banks[2], scratch[16];
+    uint16_t entry;
+    CycModRegs original;
+    uint64_t horizontal, vertical;
+} Transition;
+static Transition T;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
 static int s_on, s_roster, s_inside, s_projectiles;
@@ -92,6 +102,61 @@ int mm3_coop_read(int seat, unsigned a)
     return s_on && C.initialized && s_index[a] ? C.players[seat].ram[s_index[a] - 1] : ram(a);
 }
 static int alive(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
+static void follow_partner(void)
+{
+    if (!T.active || !alive(C.anchor ^ 1)) return;
+    static const uint16_t fields[] = {
+        0x30,0x31,0x33,0x34,0x35,0x36,0x37,0x38,0x3A,0x41,0x43,0x44,0x5D,
+        0x300,0x340,0x360,0x380,0x3A0,0x3C0,0x3E0,0x400,0x420,0x440,0x460,
+        0x480,0x4A0,0x500,0x580,0x5A0,0x5C0
+    };
+    Player *p = &C.players[C.anchor ^ 1];
+    for (unsigned i = 0; i < sizeof fields / sizeof *fields; i++) p->ram[s_index[fields[i]]-1] = ram(fields[i]);
+    unsigned i = s_index[0x5E0]-1;
+    p->ram[i] = (uint8_t)((p->ram[i] & 0x80) | (ram(0x5E0) & 0x7F));
+}
+static void victory_follow(void)
+{
+    if (T.active == 2) return;
+    capture(&C.players[C.anchor]);
+    for (int seat = 0; seat < 2; seat++) {
+        C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
+        for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+        poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
+    }
+    C.current = C.anchor; project(&C.players[C.anchor]); T.active = 2; T.priming = 0;
+    follow_partner();
+}
+static int transition_begin(uint16_t address)
+{
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || T.active) return 0;
+    CycModRegs r = {0}; cyc_mod_regs(&r);
+    if (r.s < 6) { C.failures++; return 0; }
+    capture(&C.players[C.anchor]);
+    for (int seat = 0; seat < 2; seat++) {
+        C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
+        for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+        poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
+    }
+    C.current = C.anchor; project(&C.players[C.anchor]);
+    T.active = 1; T.priming = 1; T.entry = address; T.stack = r.s; T.original = r;
+    T.banks[0] = ram(0xF4); T.banks[1] = ram(0xF5);
+    memcpy(T.scratch,cyc_cpu_ram(),sizeof T.scratch);
+    if (address == 0xE2A5) T.horizontal++; else T.vertical++;
+    follow_partner();
+    /* The native shutter waits reuse old OAM. Publish the paired entry pose
+     * before them, then restore the native PRG mapping and entry temporaries.
+     * Real RTS frames keep this continuation in the ordinary machine state. */
+    for (int i = 0; i < 256; i += 4) poke(0x200+i,0xF8);
+    poke(0x97,4);
+    const uint16_t calls[] = {0xF034,0xFF6B,address};
+    uint8_t sp = (uint8_t)(r.s-6);
+    for (int i = 0; i < 3; i++) {
+        unsigned next = calls[i]-1;
+        poke(0x100+(uint8_t)(sp+1+i*2),next); poke(0x100+(uint8_t)(sp+2+i*2),next>>8);
+    }
+    r.s = sp; cyc_mod_set_regs(&r); return 1;
+}
 static void sound(unsigned id)
 {
     unsigned next = ram(0xDA) & 7;
@@ -279,15 +344,24 @@ static void collision(int kind, unsigned entry)
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (C.scope) {
         if (C.scope != kind || r.s != C.original.s) return;
+        int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31);
         capture_combat(&C.players[C.current]); C.contacts[C.current]++;
+        int guest = C.current;
         C.current = C.scope_owner; project(&C.players[C.current]);
+        if (victory) {
+            /* The real guest hit ran the one native boss-death routine. Let
+             * the native main player own its subsequent victory coroutine. */
+            static const uint16_t script[] = {0x30,0x32,0x500,0x520,0x5A0,0x5C0,0x5E0};
+            for (unsigned i = 0; i < sizeof script / sizeof *script; i++) poke(script[i],mm3_coop_read(guest,script[i]));
+            victory_follow();
+        }
         for (unsigned i = 0; i < sizeof C.scratch; i++) poke(i, C.scratch[i]);
         cyc_mod_set_regs(&C.original); C.scope = 0; return;
     }
     if (r.x < 16 || r.x >= 32 || !alive(C.current ^ 1)) return;
-    /* Ordinary enemy calls return through their native caller. Boss/script
-     * continuations are admitted separately when their exit is qualified. */
-    if (kind == 2 && ram(0x320 + r.x) >= 0xA0) return;
+    /* Refights create their unique victory/orb actors in personal slots. They
+     * need explicit one-owner transfer before this shared call can admit them. */
+    if (kind == 2 && ram(0x320 + r.x) >= 0xA0 && ram(0x22) == 0x0F) return;
     capture(&C.players[C.current]); C.scope_owner = C.current; C.original = r;
     memcpy(C.scratch, cyc_cpu_ram(), sizeof C.scratch);
     C.current ^= 1; project_combat(&C.players[C.current]); C.scope = (uint8_t)kind;
@@ -361,7 +435,7 @@ static void transport(int seat, int arrival, int x, int y, int heal)
 }
 static void select_tick(void)
 {
-    int gameplay = L.advanced && !mm3_coop_menu_active() && !ram(0x50) && ram(0xF8) != 1;
+    int gameplay = L.advanced && !T.active && !mm3_coop_menu_active() && !ram(0x50) && ram(0xF8) != 1;
     L.advanced = 0;
     for (int seat = 0; seat < 2; seat++) {
         int held = (C.players[seat].held & 0x20) != 0, fresh = held && !L.previous[seat];
@@ -396,6 +470,7 @@ void mm3_coop_frame_end(void)
 {
     if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
+    if (ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31)) victory_follow();
     select_tick();
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
         C.anchor ^= 1; C.current = C.anchor; project(&C.players[C.anchor]);
@@ -419,6 +494,7 @@ void mm3_coop_frame_begin(void)
 }
 void mm3_coop_before_draw(void)
 {
+    if (s_on && T.active && !cyc_mod_isolated()) follow_partner();
     if (!s_on || !C.initialized || !C.ai || C.draw || C.current == C.anchor || cyc_mod_isolated()) return;
     CycModRegs r = {0}; cyc_mod_regs(&r);
     capture_combat(&C.players[C.current]); C.draw = 1; C.draw_owner = C.current; C.draw_stack = r.s;
@@ -426,8 +502,19 @@ void mm3_coop_before_draw(void)
 }
 static void after_return(void)
 {
-    if (!s_on || !C.draw || cyc_mod_isolated()) return;
+    if (!s_on || cyc_mod_isolated()) return;
     CycModRegs r = {0}; cyc_mod_regs(&r);
+    if (T.active) {
+        if (T.priming == 1 && r.pc == 0xFF6B) {
+            poke(0xF4,T.banks[0]); poke(0xF5,T.banks[1]); T.priming = 2;
+        } else if (T.priming == 2 && r.pc == T.entry) {
+            for (unsigned i = 0; i < sizeof T.scratch; i++) poke(i,T.scratch[i]);
+            cyc_mod_set_regs(&T.original); T.priming = 0;
+        } else if (T.active == 1 && !T.priming && r.s == (uint8_t)(T.stack+2)) {
+            follow_partner(); T.active = 0;
+        }
+    }
+    if (!C.draw) return;
     if (r.s != (uint8_t)(C.draw_stack + 2)) return;
     capture_combat(&C.players[C.anchor]); C.current = C.draw_owner; project_combat(&C.players[C.current]); C.draw = 0;
 }
@@ -435,7 +522,7 @@ static void after_return(void)
 void mm3_coop_draw(void)
 {
     if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 ||
-        (ram(0x30) >= 0x0C && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
+        (ram(0x30) >= 0x0C && T.active != 2 && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1, camera = ram(0xF9) * 256 + ram(0xFC);
     if (L.teleport[guest] == TELE_HIDDEN) { C.players[guest].building.count = 0; return; }
@@ -555,7 +642,7 @@ void mm3_coop_present_end(int previous) { C.current = (uint8_t)previous; }
 int mm3_coop_present_player(int seat) { int previous = C.current; if (seat >= 0 && seat < 2) C.current = (uint8_t)seat; return previous; }
 int mm3_coop_menu_ready(int seat)
 {
-    if (!s_on || !C.initialized || C.ai || C.scope || seat < 0 || seat > 1 || !alive(seat) || ram(0x50)) return 0;
+    if (!s_on || !C.initialized || T.active || C.ai || C.scope || seat < 0 || seat > 1 || !alive(seat) || ram(0x50)) return 0;
     unsigned state = mm3_coop_read(seat, 0x30), weapon = mm3_coop_read(seat, 0xA0);
     if (mm3_coop_menu_active() && state == 4) return 1;
     if (state >= 22 || (cyc_mod_peek((uint16_t)(0xCD1E + state)) & 0x80)) return 0;
@@ -597,7 +684,7 @@ static int stage_entry(uint16_t address)
 {
     (void)address;
     if (s_on && !cyc_mod_isolated()) {
-        C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; mm3_coop_menu_cancel();
+        C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; T.active = T.priming = 0; mm3_coop_menu_cancel();
     }
     return 0;
 }
@@ -607,6 +694,12 @@ static int retry_entry(uint16_t address)
     if (s_on && !cyc_mod_isolated()) L.restarting = C.initialized && C.stage == ram(0x22);
     return 0;
 }
+static int scene_exit(uint16_t address)
+{
+    /* Native password/stage-select tasks accept either controller after the
+     * one common stage coroutine has ended. Keep the surviving native actor. */
+    stage_entry(address); L.restarting = 0; return 0;
+}
 static void enabled(int on)
 {
     s_on = on != 0;
@@ -615,6 +708,11 @@ static void enabled(int on)
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.retry-entry", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.horizontal", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.vertical", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.boss-exit", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.game-over", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.stage-clear", s_on);
     mm3_coop_menu_refresh();
     cyc_mod_set_return_hook(s_on ? after_return : NULL);
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
@@ -622,7 +720,7 @@ static void enabled(int on)
 }
 void mm3_coop_power_on(void)
 {
-    memset(&C, 0, sizeof C); memset(&L, 0, sizeof L); memset(&P,0,sizeof P);
+    memset(&C, 0, sizeof C); memset(&L, 0, sizeof L); memset(&P,0,sizeof P); memset(&T,0,sizeof T);
     s_checkpoint_tables = 0;
     addresses(); mm3_coop_menu_power_on();
     if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
@@ -705,6 +803,17 @@ static int priority_valid(const uint8_t *in, int size)
 }
 static int priority_set(const uint8_t *in, int size)
 { if (!priority_valid(in,size)) return 0; if (size) memcpy(&P,in,size); else memset(&P,0,sizeof P); return 1; }
+static int transition_get(uint8_t *out, int cap)
+{ if (cap < (int)sizeof T) return -1; memcpy(T.magic,"CT01",4); memcpy(out,&T,sizeof T); return sizeof T; }
+static int transition_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    Transition n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    return !memcmp(n.magic,"CT01",4) && n.active <= 2 && n.priming <= 2 &&
+        (!n.priming || n.active == 1) && (n.active != 1 || ((n.entry == 0xE2A5 || n.entry == 0xE372) && n.stack >= 6));
+}
+static int transition_set(const uint8_t *in, int size)
+{ if (!transition_valid(in,size)) return 0; if (size) memcpy(&T,in,size); else memset(&T,0,sizeof T); return 1; }
 static void reset(void) { enabled(0); s_roster = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
@@ -732,6 +841,11 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);
     nes_mod_register_function_entry_plugin("mm3.coop.retry-entry", 0xCC18, retry_entry);
+    nes_mod_register_function_entry_plugin("mm3.coop.horizontal", 0xE2A5, transition_begin);
+    nes_mod_register_function_entry_plugin("mm3.coop.vertical", 0xE372, transition_begin);
+    nes_mod_register_function_entry_plugin("mm3.coop.boss-exit", 0xCB5B, scene_exit);
+    nes_mod_register_function_entry_plugin("mm3.coop.game-over", 0xCBB1, scene_exit);
+    nes_mod_register_function_entry_plugin("mm3.coop.stage-clear", 0xCBCE, scene_exit);
     nes_mod_register_reset_callback(reset);
     nes_mod_register_savestate_hook("mm3.coop", get, set);
     nes_mod_register_savestate_validator("mm3.coop", valid);
@@ -739,4 +853,6 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_savestate_validator("mm3.coop-lifecycle",life_valid);
     nes_mod_register_savestate_hook("mm3.coop-priority",priority_get,priority_set);
     nes_mod_register_savestate_validator("mm3.coop-priority",priority_valid);
+    nes_mod_register_savestate_hook("mm3.coop-transition",transition_get,transition_set);
+    nes_mod_register_savestate_validator("mm3.coop-transition",transition_valid);
 }

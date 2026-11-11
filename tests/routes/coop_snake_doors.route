@@ -1,0 +1,11 @@
+# Current-build prerequisite: the real final Snake Man checkpoint, frame8499.
+# Reach it with the native team death/checkpoint retry after setting the
+# existing farthest-screen prerequisite $6F=$18; do not set boss/exit flags.
+# --coop on --widescreen off --extra-scanlines 0 --charge off
+# Give seats distinct HP/ammo and contact protection with --coop-test-poke.
+# Both bodies must follow the native shutter/scroll coroutine to room13/page25.
+# Save during frames8600..8660: the real scroll coroutine must still be active.
+# Native/interpreter and cold continuation compare state, RAM, pixels and PCM.
+8500 1:RIGHT
+8500 2:-
+9250 1:-

@@ -1,0 +1,37 @@
+# Current-build prerequisite: native Snake Man arena arrival at frame9299.
+# Keep the native boss D4 in slot31. P1 remains idle; P2 alone fires.
+# With --coop-test-poke at9300 put both seats at world6440/y180, state0,
+# facing right, and protect contact without changing shared success flags.
+# Full-health case: native boss HP decreases while P1 shot parity stays0.
+# Assisted lethal case: set only boss HP ($4FF) to1 at9300, then use this route.
+# Native hit/death, victory phases, weapon award, departure and password screen
+# must run; verify $61 bit5 and Search Snake acquired at $A8. Never set either.
+# Save at9500 in the actual victory coroutine; compare cold state/RAM/pixels/PCM.
+9300 1:-
+9300 2:-
+9302 2:B
+9303 2:-
+9318 2:B
+9319 2:-
+9334 2:B
+9335 2:-
+9350 2:B
+9351 2:-
+9366 2:B
+9367 2:-
+9382 2:B
+9383 2:-
+9398 2:B
+9399 2:-
+9414 2:B
+9415 2:-
+9430 2:B
+9431 2:-
+# Player2 must also control the native password/stage-select sequence and
+# start the next real stage. Both players must receive the earned weapon.
+11002 2:START
+11020 2:-
+11200 2:RIGHT
+11210 2:-
+11400 2:START
+11410 2:-
