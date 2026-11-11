@@ -1,0 +1,10 @@
+# Same current-build prerequisite as weapons.route.
+# A shoulder edge while hurt must expire instead of applying after recovery.
+7800 POKE A2 9C
+7800 HOLD 39 40
+7800 POKE A3 9C
+7800 POKE 30 06
+7800 X1:R
+7801 X1:-
+7802 POKE 30 00
+# Expected at 7819: Buster (0), no weapon changes.

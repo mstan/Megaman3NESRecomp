@@ -34,9 +34,15 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         GAME_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/game.toml"
         RECOMPILER "${NESRECOMP_HOST_COMPILER}"
         SEED_FILE "${NESRECOMP_CYCLE_SEEDS}"
+        GAME_ID "mega-man-3-usa"
         PLAYERS 1
+        MODS
         HOST_EXTRAS "${CMAKE_CURRENT_SOURCE_DIR}/cycle_extras.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_widescreen.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c"
         BOXART "${CMAKE_CURRENT_SOURCE_DIR}/boxart.tga")
+    add_custom_command(TARGET MegaMan3Recomp POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded" "$<TARGET_FILE_DIR:MegaMan3Recomp>/mods")
     return()
 elseif(NOT NESRECOMP_BACKEND STREQUAL "legacy")
     message(FATAL_ERROR "NESRECOMP_BACKEND must be cycle or legacy")

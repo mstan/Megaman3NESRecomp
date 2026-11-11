@@ -727,6 +727,13 @@ id = "mm3.widescreen.nmi"
 addr = 0xC000
 bytes = "08 48 8A 48 98 48 AD 02 20"
 
+# Native player controller entry, after gameplay has restored the stage bank.
+[[mod_function_hook]]
+id = "mm3.enhancement.player-dispatch"
+addr = 0xCD34
+bytes = "AD 20 04 C9 02 D0 06 A5"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

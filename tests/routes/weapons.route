@@ -1,0 +1,45 @@
+# Current-build prerequisite: Snake Man gameplay snapshot after frame 7799,
+# with --weapon-cycle on, --extra-scanlines 0 and --widescreen off.
+# These explicit equipment grants test selection, not acquisition/progression.
+7800 POKE A2 9C
+7800 HOLD 39 40
+7800 POKE A3 9C
+7800 POKE A4 80
+7800 POKE A5 9C
+7800 POKE A6 00
+7800 POKE A7 9C
+7800 POKE A8 00
+7800 POKE A9 9C
+7800 POKE AA-AD 00
+7810 X1:R
+7811 X1:-
+7820 X1:R
+7821 X1:-
+7830 X1:R
+# A held shoulder changes once. Save at 7835 to test held-input continuation.
+7855 X1:-
+7860 X1:L+R
+7861 X1:-
+# Player two's host action must not switch player one's equipment.
+7870 X2:R
+7871 X2:-
+7880 X1:R
+7881 X1:-
+7890 X1:L
+7891 X1:-
+7900 X1:L
+7901 X1:-
+7910 X1:L
+7911 X1:-
+7920 X1:L
+7921 X1:-
+7930 X1:L
+7931 X1:-
+7940 X1:R
+7941 X1:-
+7950 X1:R
+7951 X1:-
+7960 X1:R
+7961 X1:-
+# Expected at 7999: Needle Cannon (2), empty ammo 80, twelve changes,
+# Magnet Missile still locked, HP 28; native/interpreter state/picture equal.

@@ -54,6 +54,21 @@ Cycle-native comparisons use `nesrecomp/tools/cyc/cyc_verify.py`; `--interp-only
 runs the cycle interpreter for diagnosis. Earlier `--verify` / `--emulated`
 Nestopia entry points remain in the legacy build.
 
+The default-on **Quick weapon switching** mod maps L/LB and R/RB to the
+previous and next acquired weapon or Rush helper. It skips locked equipment,
+allows empty acquired weapons, wraps, and changes once per press. Both shoulders
+together do nothing. Switching clears the previous weapon's projectiles and
+helper, updates the native palette and graphics, and preserves HP and ammo.
+Start retains the native inventory. Both stick clicks open the system menu;
+Escape remains available, and customized bindings are preserved. Keyboard weapon
+actions start unbound. Use `--weapon-cycle on|off` for automated runs.
+
+`tests/routes/boot_snake.route`, `weapons.route` and `weapons_guard.route` cover
+the native stage entry, weapon gallery, held/simultaneous/separate-seat inputs
+and unsafe-input guards. Their headers identify equipment assistance and the
+current-build snapshot prerequisite. These checks do not establish full-game
+or co-op qualification.
+
 The owner accepted the short Windows playtest on 2026-10-04. These remain
 branch previews; no merge or release has been performed. Desktop Windows checks cover a short gameplay route and runtime
 menu/input/save-state behavior; other platforms and full-game completion have

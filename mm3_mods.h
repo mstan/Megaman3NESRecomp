@@ -1,0 +1,11 @@
+#pragma once
+#include "cyc_input.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+extern const CycInputProfile mm3_input_profile;
+void mm3_mods_power_on(void);
+void mm3_mods_frame_end(void);
+void mm3_mods_input(uint8_t buttons[2]);
+bool mm3_mods_option(const char *name, const char *value);
+void mm3_mods_tcp_setup(void);

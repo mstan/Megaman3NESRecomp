@@ -1,0 +1,15 @@
+# Unassisted cold boot through title and original stage confirmation.
+0 -
+6000 START
+6010 -
+6200 UP
+6210 -
+6400 START
+6410 -
+7300 RIGHT+B
+7400 RIGHT+A+B
+7440 RIGHT+B
+7600 RIGHT+DOWN+A
+7601 RIGHT+DOWN
+7630 RIGHT+B
+7750 -

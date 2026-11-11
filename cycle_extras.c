@@ -5,6 +5,7 @@
 #include "cyc_trace.h"
 #include "cyc_video.h"
 #include "mm3_widescreen.h"
+#include "mm3_mods.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -25,6 +26,7 @@ static void power_on(void *ctx)
     (void)ctx;
     cyc_set_extra_scanlines(reduce_slowdown ? 128u : 0u);
     mm3_ws_power_on();
+    mm3_mods_power_on();
 }
 
 static void load_setting(void *ctx, const char *key, const char *value)
@@ -124,6 +126,7 @@ static void tcp_setup(void *ctx)
     cyc_tcp_register("mm3_poke", "store a CPU RAM byte: addr, value (test driving)", tcp_poke);
     cyc_tcp_register("mm3_slowdown", "query/set {enabled: bool} slowdown reduction", tcp_slowdown);
     cyc_tcp_register("mm3_ws", "widescreen state; set {mode: off|16:9|21:9|32:9|fit}", tcp_widescreen);
+    mm3_mods_tcp_setup();
 }
 #endif
 
@@ -148,6 +151,7 @@ static void close_stats(void) { if (stats) fclose(stats); stats = NULL; }
 static bool option(void *ctx, const char *name, const char *value)
 {
     (void)ctx;
+    if (mm3_mods_option(name, value)) return true;
     if (!strcmp(name, "--widescreen")) return mm3_ws_set_mode_name(value);
     if (strcmp(name, "--mm3-frame-stats")) return false;
     stats = fopen(value, "w");
@@ -172,6 +176,7 @@ static void end(void *ctx)
 {
     (void)ctx;
     mm3_ws_frame_end();
+    mm3_mods_frame_end();
     if (!stats) return;
     const uint8_t *r = cyc_cpu_ram();
     fprintf(stats, "%u,%llu,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", frame++,
@@ -185,16 +190,24 @@ static void state_loaded(void *ctx)
     mm3_ws_state_loaded();
 }
 
+static void input(void *ctx, uint8_t buttons[2])
+{
+    (void)ctx;
+    mm3_mods_input(buttons);
+}
+
 const CycHostExtras *cyc_host_extras(void)
 {
     static const CycHostOption options[] = {
         {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"},
-        {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default fit)"}
+        {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default fit)"},
+        {"--weapon-cycle", true, "on|off: L/R cycles acquired weapons and Rush helpers"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,
         .frame_begin = begin, .frame_end = end, .state_loaded = state_loaded,
-        .options = options, .option_count = 2, .option = option,
+        .options = options, .option_count = sizeof options / sizeof options[0], .option = option,
+        .input = input, .input_profile = &mm3_input_profile,
 #ifdef CYC_WITH_RECOMP_UI
         .menu_items = menu_items, .menu_item_count = 2, .menu_callbacks = &menu_callbacks,
 #endif

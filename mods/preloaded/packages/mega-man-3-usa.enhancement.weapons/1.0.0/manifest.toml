@@ -1,0 +1,24 @@
+format_version = 1
+id = "mega-man-3-usa.enhancement.weapons"
+version = "1.0.0"
+name = "Quick weapon switching"
+author = "NESRecomp"
+description = "Use L/R to select acquired weapons and Rush helpers without opening the inventory."
+license = "MIT"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "mega-man-3-usa"
+rom_crc32 = "603aaa57"
+
+[[feature]]
+id = "weapons"
+name = "Quick weapon switching"
+description = "L selects the previous acquired weapon or helper; R selects the next. Empty acquired equipment remains selectable."
+group = "Gameplay"
+default_enabled = true
+
+[[plugin]]
+feature = "weapons"
+id = "mega-man-3-usa.weapons"
