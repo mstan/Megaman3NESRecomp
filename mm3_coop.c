@@ -4,6 +4,7 @@
 #include "mm3_proto.h"
 #include "mm3_charge.h"
 #include "mm3_widescreen.h"
+#include "mm3_coop_menu.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
@@ -42,6 +43,7 @@ static int s_poke_count;
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 2047]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
 int mm3_coop_enabled(void) { return s_on; }
+int mm3_coop_scene_active(void) { return s_on && C.initialized; }
 int mm3_coop_seat(void) { return s_on ? C.current : 0; }
 int mm3_coop_character(int seat) { return s_roster ^ (seat & 1); }
 static void addresses(void)
@@ -177,7 +179,7 @@ int mm3_coop_dispatch(void)
 {
     if (!s_on || s_inside || C.scope || C.ai || cyc_mod_isolated()) return 0;
     addresses();
-    if (ram(0xF8) == 1 || ram(0x50) || ram(0x30) == 4 || ram(0x30) >= 0x0C) return 0;
+    if (ram(0xF8) == 1 || ram(0x50) || ram(0x30) >= 0x0C || (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1;
@@ -235,10 +237,11 @@ void mm3_coop_input(uint8_t buttons[2])
             nes_input_seat(1) | nes_input_seat(2);
         buttons[1] = 0;
     }
+    mm3_coop_menu_input(buttons);
 }
 void mm3_coop_frame_end(void)
 {
-    if (!s_on || !C.initialized || C.scope || C.ai) return;
+    if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
         C.anchor ^= 1; C.current = C.anchor; project(&C.players[C.anchor]);
@@ -250,7 +253,7 @@ void mm3_coop_frame_end(void)
 void mm3_coop_frame_begin(void)
 {
     if (!s_on) return;
-    if (C.initialized && !C.scope && (C.stage != ram(0x22) || ram(0x30) == 4)) {
+    if (C.initialized && !C.scope && C.stage != ram(0x22)) {
         C.initialized = C.ai = 0; C.current = C.anchor;
     }
     if (C.initialized) for (int i = 0; i < s_poke_count; i++) if (s_pokes[i].frame == cyc_ring_frame) {
@@ -276,7 +279,7 @@ static void after_return(void)
 /* Graphics are captured through the native per-entity draw routine. */
 void mm3_coop_draw(void)
 {
-    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 || ram(0x30) == 4 || ram(0x30) >= 0x0C) return;
+    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 || ram(0x30) >= 0x0C) return;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1, camera = ram(0xF9) * 256 + ram(0xFC);
     C.current = (uint8_t)guest; project(&C.players[guest]);
@@ -361,17 +364,73 @@ int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
 }
 int mm3_coop_present_begin(void) { int previous = C.current; if (s_on) C.current = C.anchor; return previous; }
 void mm3_coop_present_end(int previous) { C.current = (uint8_t)previous; }
+int mm3_coop_present_player(int seat) { int previous = C.current; if (seat >= 0 && seat < 2) C.current = (uint8_t)seat; return previous; }
+int mm3_coop_menu_ready(int seat)
+{
+    if (!s_on || !C.initialized || C.ai || C.scope || seat < 0 || seat > 1 || !alive(seat) || ram(0x50)) return 0;
+    unsigned state = mm3_coop_read(seat, 0x30), weapon = mm3_coop_read(seat, 0xA0);
+    if (mm3_coop_menu_active() && state == 4) return 1;
+    if (state >= 22 || (cyc_mod_peek((uint16_t)(0xCD1E + state)) & 0x80)) return 0;
+    for (int slot = 1; slot <= 3; slot++) if ((mm3_coop_read(seat, 0x300 + slot) & 0x80) &&
+        !(slot == 1 && (weapon == 7 || weapon == 9 || weapon == 11))) return 0;
+    return 1;
+}
+void mm3_coop_menu_project(int seat)
+{
+    capture_combat(&C.players[C.current]); C.current = (uint8_t)seat; project_combat(&C.players[seat]); controls(&C.players[seat]);
+}
+void mm3_coop_menu_restore(void)
+{
+    capture_combat(&C.players[C.current]); C.current = C.anchor; project_combat(&C.players[C.anchor]); controls(&C.players[C.anchor]);
+}
+int mm3_coop_menu_equip(int seat, int weapon)
+{
+    if (!s_on || !C.initialized || !alive(seat)) return 0;
+    int previous = C.current; capture(&C.players[previous]); C.current = (uint8_t)seat; project(&C.players[seat]);
+    int ok = mm3_mods_equip(weapon, 0);
+    if (ok) {
+        mm3_charge_cancel(); poke(0x30, 4); poke(0x5C0, 0x13); poke(0x5A0, 1); poke(0x5E0, 0);
+        capture(&C.players[seat]);
+    }
+    C.current = (uint8_t)previous; project(&C.players[previous]); return ok;
+}
+int mm3_coop_menu_tank(int seat)
+{
+    if (!s_on || !C.initialized || !alive(seat) || !ram(0xAF)) return 0;
+    int stock = ram(0xAF) - 1; if ((stock & 15) == 15) stock -= 6; poke(0xAF, stock); return 1;
+}
+void mm3_coop_menu_heal(int seat)
+{
+    if (seat < 0 || seat > 1 || !C.initialized) return;
+    Player *p = &C.players[seat]; unsigned i = s_index[0xA2] - 1; int hp = p->ram[i] & 31;
+    if (hp < 28) { p->ram[i] = (uint8_t)(0x80 | (hp + 1)); if (C.current == seat) poke(0xA2, p->ram[i]); }
+}
+static int stage_entry(uint16_t address)
+{
+    (void)address;
+    if (s_on && !cyc_mod_isolated()) {
+        C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; mm3_coop_menu_cancel();
+    }
+    return 0;
+}
 static void enabled(int on)
 {
     s_on = on != 0;
     nes_mod_set_function_hook_enabled("mm3.coop.pool-end", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
+    mm3_coop_menu_refresh();
     cyc_mod_set_return_hook(s_on ? after_return : NULL);
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
     nes_mod_set_local_only("Mega Man 3 co-op development", s_on);
 }
-void mm3_coop_power_on(void) { memset(&C, 0, sizeof C); addresses(); enabled(s_on); }
+void mm3_coop_power_on(void)
+{
+    memset(&C, 0, sizeof C); addresses(); mm3_coop_menu_power_on();
+    if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
+    enabled(s_on);
+}
 bool mm3_coop_option(const char *name, const char *value)
 {
     if (!strcmp(name, "--coop-test-poke")) {
@@ -432,12 +491,14 @@ void mm3_coop_tcp_setup(void)
 #ifdef CYC_WITH_SDL
     cyc_tcp_register("mm3_coop", "query native two-player simulation", tcp);
 #endif
+    mm3_coop_menu_tcp_setup();
 }
 NES_MOD_CONSTRUCTOR(register_mm3_coop)
 {
     nes_mod_register_function_entry_plugin("mm3.coop.pool-end", 0x8014, pool_boundary);
     nes_mod_register_function_entry_plugin("mm3.coop.enemy-done", 0x808B, enemy_done);
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
+    nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);
     nes_mod_register_reset_callback(reset);
     nes_mod_register_savestate_hook("mm3.coop", get, set);
     nes_mod_register_savestate_validator("mm3.coop", valid);

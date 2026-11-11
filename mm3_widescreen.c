@@ -28,6 +28,7 @@
 #include "mm3_proto.h"
 #include "mm3_charge.h"
 #include "mm3_coop.h"
+#include "mm3_coop_menu.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -513,6 +514,7 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
 {
     int previous = mm3_coop_present_begin();
     int result = compose(out, width, height, native_x0, native, user);
+    result = mm3_coop_menu_draw(out, width) || result;
     mm3_coop_present_end(previous);
     return result;
 }

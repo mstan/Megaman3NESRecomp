@@ -264,6 +264,15 @@ static uint32_t color(uint32_t c, int weapon, int charge)
     }
     return c;
 }
+void mm3_proto_paint_portrait(uint32_t *out, int width, int left, int top, int weapon)
+{
+    if (!s_on || !s_loaded) return;
+    for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++) {
+        uint32_t c = s_atlas.portrait[y * 16 + x];
+        int dx = left + x, dy = top + y;
+        if (c && dx >= 0 && dx < width && dy >= 0 && dy < 240) out[dy * width + dx] = color(c, weapon, 0);
+    }
+}
 
 static int menu_begin(uint16_t address)
 {

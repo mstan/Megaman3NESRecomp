@@ -48,6 +48,7 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         HOST_EXTRAS "${CMAKE_CURRENT_SOURCE_DIR}/cycle_extras.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_widescreen.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_proto.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_charge.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_coop.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_coop_menu.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_charge_data.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_donor.c"

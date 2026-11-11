@@ -90,6 +90,12 @@ static int weapon_dispatch(uint16_t address)
     while (next != current && next && !(ram(0xA2 + next) & 0x80));
     if (next == current) return 0;
 
+    if (mm3_mods_equip(next, 1)) W.changes++;
+    return 0;
+}
+int mm3_mods_equip(int next, int announce)
+{
+    if (next < 0 || next >= 12 || (next && !(ram(0xA2 + next) & 0x80)) || !equipment_tables()) return 0;
     /* Personal weapon slots, including Rush and slide dust. Never touch world slots. */
     for (int slot = 1; slot < 16; slot++) poke(0x300 + slot, 0);
     poke(0x5B, 0); poke(0x5C, 0); /* Release the departing Spark Shock effect. */
@@ -105,12 +111,11 @@ static int weapon_dispatch(uint16_t address)
     poke(0x18, 3);
     /* Native sound ring: submit_sound_ID ($F89A), without touching its temporaries. */
     int sound = ram(0xDA) & 7;
-    if (ram(0xDC + sound) == 0x88) {
+    if (announce && ram(0xDC + sound) == 0x88) {
         poke(0xDC + sound, 0x1B);
         poke(0xDA, (sound + 1) & 7);
     }
-    W.changes++;
-    return 0;
+    return 1;
 }
 
 static int player_dispatch(uint16_t address)

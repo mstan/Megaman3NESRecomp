@@ -824,6 +824,36 @@ addr = 0xF89A
 bytes = "86 00 A6 DA 85 01 B5 DC"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.coop.stage-entry"
+addr = 0xC9B3
+bytes = "A9 9C 85 A2 A9 E8 85 51"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop-menu.request"
+addr = 0xCA73
+bytes = "A5 14 29 10 F0 3C A5 30"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop-menu.after-pause"
+addr = 0xCAB5
+bytes = "A5 22 85 F5 20 6B FF 20"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop-menu.entry"
+addr = 0xA003
+bytes = "A5 EA 48 A5 EB 48 A5 EC"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop-menu.phase-end"
+addr = 0xA213
+bytes = "E6 19 E6 50 A9 74 C5 EA"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

@@ -201,5 +201,10 @@ two's controls are kept separate from the retail cartridge's debug controls.
 Ordinary enemies and pickups use the nearer living player. A survivor retains
 control and stage music; a team wipe uses the native shared-life retry. Native
 health and ammo refills keep their recipient's inventory and drawing context.
-This remains a development slice: co-op menus, boss/script and transition
-coverage, full lifecycle/camera behavior and online qualification are pending.
+Start opens two native inventory panels. Each player selects their own equipment;
+the player who opened the menu confirms resume with Start. Energy Tanks use one
+shared stock and refill only the requesting player, including simultaneous use
+of the last tank. The native menu layout, cursors, weapon graphics and Rush
+transformation timing are retained, with a Proto Man portrait for that player.
+This remains a development slice: boss/script and transition coverage, full
+lifecycle/camera behavior and online qualification are pending.

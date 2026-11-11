@@ -11,3 +11,4 @@ bool mm3_mods_option(const char *name, const char *value);
 void mm3_mods_tcp_setup(void);
 void mm3_mods_refresh_hooks(void);
 void mm3_mods_personal_dispatch(void);
+int mm3_mods_equip(int weapon, int announce);

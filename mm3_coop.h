@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 int mm3_coop_enabled(void);
+int mm3_coop_scene_active(void);
 int mm3_coop_seat(void);
 int mm3_coop_character(int seat);
 int mm3_coop_read(int seat, unsigned address);
@@ -20,3 +21,10 @@ bool mm3_coop_option(const char *name, const char *value);
 void mm3_coop_tcp_setup(void);
 int mm3_coop_present_begin(void);
 void mm3_coop_present_end(int previous);
+int mm3_coop_present_player(int seat);
+int mm3_coop_menu_ready(int seat);
+void mm3_coop_menu_project(int seat);
+void mm3_coop_menu_restore(void);
+int mm3_coop_menu_equip(int seat, int weapon);
+int mm3_coop_menu_tank(int seat);
+void mm3_coop_menu_heal(int seat);
