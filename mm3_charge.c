@@ -154,7 +154,7 @@ void mm3_charge_dispatch(void)
 static int scale_damage(uint16_t address)
 {
     (void)address;
-    if (!s_on || ram(0xA0)) return 0;
+    if (!s_on || ram(0xA0) || mm3_proto_reflecting()) return 0;
     int slot = ram(0x10);
     if (slot < 1 || slot > 3 || C.shots[slot].kind != 2) return 0;
     CycModRegs r; cyc_mod_regs(&r);
@@ -173,7 +173,7 @@ static int preserve_killing_shot(uint16_t address)
 {
     (void)address;
     int slot = ram(0x10);
-    if (!s_on || ram(0xA0) || slot < 1 || slot > 3 || C.shots[slot].kind != 2) return 0;
+    if (!s_on || ram(0xA0) || mm3_proto_reflecting() || slot < 1 || slot > 3 || C.shots[slot].kind != 2) return 0;
     CycModRegs r; cyc_mod_regs(&r);
     if (C.keep && C.keep_slot == slot) { r.a = C.keep_flag; cyc_mod_set_regs(&r); C.passed++; }
     else C.destroyed++;

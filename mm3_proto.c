@@ -33,6 +33,15 @@ typedef struct {
 } ProtoState;
 static ProtoState s_states[2];
 #define S s_states[mm3_coop_seat()]
+typedef struct {
+    char magic[4];
+    uint8_t enabled, running, active, shot, weapon, animation, state, boss;
+    uint16_t remaining;
+    CycModRegs original;
+    uint8_t weapons[3][24], scratch[16];
+} Reflection;
+static Reflection s_reflections[2];
+#define R s_reflections[mm3_coop_seat()]
 typedef struct { uint8_t mask, selected, weapon; int16_t y; uint8_t oam[16]; } MenuFrame;
 typedef struct { char magic[4]; uint8_t enabled; MenuFrame building, shown; } MenuState;
 static MenuState s_menus[2];
@@ -45,6 +54,7 @@ static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v)
 int mm3_proto_available(void) { return s_on; }
 int mm3_proto_selected(void) { return s_on && (mm3_coop_enabled() ? mm3_coop_character(mm3_coop_seat()) : S.selected); }
 int mm3_proto_teleporting(void) { return s_on && S.teleport; }
+int mm3_proto_reflecting(void) { return s_on && R.active; }
 int mm3_proto_shot_limit(void) { return mm3_proto_selected() && s_real ? 2 : 3; }
 int mm3_proto_muzzle_y(int native_offset)
 {
@@ -98,6 +108,7 @@ static void set_enabled(int enabled)
 void mm3_proto_power_on(void)
 {
     memset(s_states, 0, sizeof s_states);
+    memset(s_reflections, 0, sizeof s_reflections);
     memset(s_menus, 0, sizeof s_menus);
     S.selected = s_on && s_start;
     set_enabled(s_on);
@@ -474,43 +485,77 @@ static int shield(uint16_t address)
 
 static int reflected_hit(uint16_t address)
 {
-    (void)address;
-    mm3_coop_weapon_hit();
-    if (!s_on || !S.reflected) return 0;
-    CycModRegs r; cyc_mod_regs(&r);
-    int enemy = r.x;
-    if (enemy < 16 || enemy >= 32) return 0;
-    /* Retail collision visits slots 1..3. Project each extra reflected shot
-     * through that exact native path, with its own Buster damage identity.
-     * Commit only the target, that shot and native sound requests; never the
-     * temporary player, bank, stack, camera or other personal weapon slots. */
-    for (int shot = 14; shot <= 15; shot++) if (S.reflected & (1u << shot)) {
-        uint8_t actor[24], projectile[24], audio[9];
-        if (!cyc_mod_isolate_begin()) continue;
-        for (int field = 0; field < 24; field++) poke(0x303 + field * 32, ram(0x300 + field * 32 + shot));
-        poke(0x301, 0); poke(0x302, 0); poke(0xA0, 0);
-        if (ram(0x5C0) == 0xA3) poke(0x5C0, 1);
-        CycModRegs call = r;
-        int ok = cyc_mod_call(0x8102, &call);
-        if (ok) {
-            for (int field = 0; field < 24; field++) {
-                actor[field] = ram(0x300 + field * 32 + enemy);
-                projectile[field] = ram(0x303 + field * 32);
+    CycModRegs r = {0}; cyc_mod_regs(&r);
+    /* A reflected native call must finish before the enclosing co-op hit
+     * scope restores its owner or starts another guest pass. */
+    if (!(R.running && r.s == R.original.s)) mm3_coop_weapon_hit();
+    cyc_mod_regs(&r);
+    if (!s_on || cyc_mod_isolated()) return 0;
+    if (R.running) {
+        if (r.s != R.original.s) return 0;
+        if (R.active) {
+            int killed_boss = R.boss && !(ram(0x4E0+R.original.x) & 31);
+            if (!killed_boss) for (int field = 0; field < 24; field++)
+                poke(0x300 + field*32 + R.shot,ram(0x303 + field*32));
+            for (int slot = 1; slot <= 3; slot++) for (int field = 0; field < 24; field++)
+                poke(0x300 + field*32 + slot,R.weapons[slot-1][field]);
+            if (killed_boss) {
+                /* The native death owns all explosions and the refight's
+                 * unique actors14/15. Do not resurrect cleared weapons. */
+                for (int slot = 1; slot <= 3; slot++) poke(0x300+slot,0);
+                if (ram(0x22) != 0x0F) { poke(0x30E,0); poke(0x30F,0); }
+                S.reflected = R.remaining = 0;
             }
-            audio[0] = ram(0xDA);
-            for (int i = 0; i < 8; i++) audio[i + 1] = ram(0xDC + i);
+            poke(0xA0,R.weapon);
+            if (ram(0x30) == R.state) poke(0x5C0,R.animation);
+            for (unsigned i = 0; i < sizeof R.scratch; i++) poke(i,R.scratch[i]);
+            cyc_mod_set_regs(&R.original); r = R.original; R.active = 0;
         }
-        cyc_mod_isolate_end();
-        if (!ok) continue;
-        for (int field = 0; field < 24; field++) {
-            poke(0x300 + field * 32 + enemy, actor[field]);
-            poke(0x300 + field * 32 + shot, projectile[field]);
-        }
-        poke(0xDA, audio[0]);
-        for (int i = 0; i < 8; i++) poke(0xDC + i, audio[i + 1]);
+        if (!R.remaining) { R.running = 0; return 0; }
+    } else {
+        if (!S.reflected || r.x < 16 || r.x >= 32 || r.s < 2) return 0;
+        R.original = r; R.running = 1; R.remaining = S.reflected & 0xC000;
+        R.weapon = ram(0xA0); R.animation = ram(0x5C0); R.state = ram(0x30);
+        R.boss = (ram(0x300+r.x) & 0x40) != 0 && (ram(0x4E0+r.x) & 31) != 0;
+        memcpy(R.scratch,cyc_cpu_ram(),sizeof R.scratch);
+        for (int slot = 1; slot <= 3; slot++) for (int field = 0; field < 24; field++)
+            R.weapons[slot-1][field] = ram(0x300 + field*32 + slot);
     }
+    int shot;
+    for (shot = 14; shot <= 15; shot++) if (R.remaining & (1u<<shot)) break;
+    if (shot > 15) { R.running = 0; return 0; }
+    R.remaining &= (uint16_t)~(1u<<shot); R.shot = (uint8_t)shot; R.active = 1;
+    for (int field = 0; field < 24; field++) poke(0x303+field*32,ram(0x300+field*32+shot));
+    poke(0x301,0); poke(0x302,0); poke(0xA0,0);
+    if (ram(0x5C0) == 0xA3) poke(0x5C0,1);
+    unsigned ret = address-1;
+    poke(0x100+r.s,ret>>8); r.s--; poke(0x100+r.s,ret); r.s--;
+    cyc_mod_set_regs(&r);
     return 0;
 }
+
+static int reflection_get(uint8_t *out, int cap)
+{
+    int count = mm3_coop_enabled() ? 2 : 1, size = count*(int)sizeof R;
+    if (cap < size) return -1;
+    for (int i = 0; i < count; i++) { memcpy(s_reflections[i].magic,"MR01",4); s_reflections[i].enabled = (uint8_t)s_on; }
+    memcpy(out,s_reflections,size); return size;
+}
+static int reflection_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    int count = mm3_coop_enabled() ? 2 : 1;
+    if (!in || size != count*(int)sizeof R) return 0;
+    for (int i = 0; i < count; i++) {
+        Reflection n; memcpy(&n,in+i*sizeof n,sizeof n);
+        if (memcmp(n.magic,"MR01",4) || n.enabled != s_on || n.running > 1 || n.active > 1 || n.boss > 1 ||
+            (n.remaining & ~0xC000u) || (n.active && (!n.running || n.shot < 14 || n.shot > 15)) ||
+            (n.running && (n.original.s < 2 || n.original.x < 16 || n.original.x >= 32 || n.weapon >= 12))) return 0;
+    }
+    return 1;
+}
+static int reflection_set(const uint8_t *in, int size)
+{ if (!reflection_valid(in,size)) return 0; if (size) memcpy(s_reflections,in,size); else memset(s_reflections,0,sizeof s_reflections); return 1; }
 
 static int state_get(uint8_t *out, int cap)
 {
@@ -634,4 +679,6 @@ NES_MOD_CONSTRUCTOR(register_mm3_proto)
     nes_mod_register_savestate_validator("mm3.protoman", state_valid);
     nes_mod_register_savestate_hook("mm3.proto-menu", menu_state_get, menu_state_set);
     nes_mod_register_savestate_validator("mm3.proto-menu", menu_state_valid);
+    nes_mod_register_savestate_hook("mm3.reflection",reflection_get,reflection_set);
+    nes_mod_register_savestate_validator("mm3.reflection",reflection_valid);
 }

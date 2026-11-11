@@ -1,0 +1,24 @@
+# Current-build prerequisite: Snake Man co-op gameplay at frame7799.
+# Validate the authored slot29 projectile template: routine8F, animation73.
+# Use --coop-test-poke to put P2 Proto at world300/y84, native air state1,
+# facing right with no firing animation; keep P1 away. Retain target30.
+# This reactivates and positions the actual native projectile, then lets the
+# native shield, reflected Buster14/15 and native collision perform the hit.
+# Repeat with P2 TopSpin selected (A0=5, A7=9C). Weapon and ammo must remain.
+# Native/interpreter and cold7800->7812 RAM/state/pixels/PCM must agree.
+7800 1:-
+7800 2:-
+7800 POKE 31D 80
+7800 POKE 37D 38
+7800 POKE 39D 01
+7800 POKE 3DD 4C
+7800 POKE 3FD 00
+# Separate actual-boss setup: load the native Snake arena arrival at9299;
+# use the same validated projectile template near an airborne Proto, with the
+# native Snake boss ahead. Only boss HP may be reduced to1 for the lethal case.
+# Its real reflected hit must run native death/victory/award/password, setting
+# the actual beaten bit61:20 and awarding SearchSnake atA8. Never set these.
+# Charge-alias setup: let only P2 hold B for93frames and release, keeping its
+# real full charged shot in slot3 away from the target. Reflect while it is
+# alive: target HP4 must become3, not1; original shot3 and its charge kind2
+# must survive. Compare native/interpreter, current-state continuation and PCM.
