@@ -18,3 +18,4 @@ void mm3_charge_part_emitted(void);
 void mm3_charge_pose_done(void);
 int mm3_charge_draw_ready(void);
 int mm3_charge_place(int slot, uint32_t *out);
+int mm3_charge_private_place(int slot, uint32_t *out, int width, int origin, const uint8_t *opaque, const uint8_t *oam);

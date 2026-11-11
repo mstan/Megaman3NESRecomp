@@ -27,6 +27,7 @@
 #include "mm3_widescreen.h"
 #include "mm3_proto.h"
 #include "mm3_charge.h"
+#include "mm3_coop.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -197,6 +198,7 @@ static int begin_pass(uint16_t addr)
     if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
     s_wide_n[s_wide_cur] = 0;
     mm3_proto_draw_begin();
+    mm3_coop_draw();
     return 0;
 }
 
@@ -208,6 +210,7 @@ static int nmi_latch(uint16_t addr)
     if (ram(0xEE) | ram(0x9A)) return 0;
     s_wide_shown = s_wide_cur;
     mm3_proto_draw_latch();
+    mm3_coop_latch();
     return 0;
 }
 
@@ -488,18 +491,20 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
     int changed = mm3_proto_native_picture(s_character_picture);
     if (changed) native = s_character_picture;
     if (width == 256) {
-        if (changed) memcpy(out, native, 256 * 240 * sizeof *out);
-        return changed;
+        if (changed || mm3_coop_enabled()) memcpy(out, native, 256 * 240 * sizeof *out);
+        return mm3_coop_paint(out, width, 0, cyc_frame_bg_opaque()) || changed;
     }
-    if (render_world(out, width, height, native_x0, native, user)) return 1;
-    if (!changed) return 0;
+    if (render_world(out, width, height, native_x0, native, user)) {
+        mm3_coop_paint(out, width, cyc_render_native_origin(width), s_opaque); return 1;
+    }
+    if (!changed && !mm3_coop_enabled()) return 0;
     int left = (width - 256) / 2;
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
         memcpy(out + y * width + left, native + y * 256, 256 * sizeof *out);
     }
     cyc_render_set_native_origin(left);
-    return 1;
+    return mm3_coop_paint(out, width, left, NULL) || changed;
 }
 
 void mm3_ws_refresh_policy(void)

@@ -185,11 +185,18 @@ Select swaps playable characters with a short teleport. Proto Man defaults to
 his own traits: two normal shots, double incoming damage, and an airborne front
 shield that reflects supported small projectiles. The character mod also offers
 Mega Man behavior as a visual reskin. Native sliding and the original weapons
-remain available. The current adapters are restricted to local single-player
-until the complete co-op and online simulation profile is qualified.
+remain available. The current adapters are restricted to local play until the
+complete online simulation profile is qualified.
 
 The optional Charged Mega Buster package reads its art, constants and effects
 from a verified local Mega Man 4 (USA) image. It works for both characters,
 retains native sliding, and uses MM4's half/full charge timing and sound driver.
 The source image is not included. Proto Man also has his own portrait in the
 native pause menu; the original life and E-Tank counters remain in place.
+
+The feature branch also has a development `--coop on` path, with complementary
+characters (`--coop-p1 megaman|protoman`), separate native player/Rush/projectile
+state, independent L/R equipment selection and current-build save/load. Player
+two's controls are kept separate from the retail cartridge's debug controls.
+This remains a development slice: co-op menus, boss/script and transition
+coverage, full lifecycle/camera behavior and online qualification are pending.

@@ -806,6 +806,12 @@ addr = 0xA341
 bytes = "CA CA CA CA 10 D9 A5 A1"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.coop.pool-end"
+addr = 0x8014
+bytes = "A0 01 E4 5B F0 46 C8 E4"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

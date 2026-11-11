@@ -2,6 +2,7 @@
 #include "mm3_mods.h"
 #include "mm3_proto.h"
 #include "mm3_charge.h"
+#include "mm3_coop.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
@@ -23,7 +24,8 @@ typedef struct {
     uint8_t magic[4], enabled, previous, pending, reserved;
     uint64_t changes;
 } WeaponState;
-static WeaponState W;
+static WeaponState s_states[2];
+#define W s_states[mm3_coop_seat()]
 
 const CycInputProfile mm3_input_profile = {
     .id = "megaman-weapons-1",
@@ -46,7 +48,7 @@ static void weapons_set(int on)
 
 void mm3_mods_refresh_hooks(void)
 {
-    nes_mod_set_function_hook_enabled(HOOK, s_weapons || mm3_proto_available() || mm3_charge_available());
+    nes_mod_set_function_hook_enabled(HOOK, s_weapons || mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled());
 }
 
 static int equipment_tables(void)
@@ -113,35 +115,38 @@ static int weapon_dispatch(uint16_t address)
 
 static int player_dispatch(uint16_t address)
 {
+    if (!cyc_mod_isolated()) mm3_coop_dispatch();
     if (mm3_proto_dispatch()) { mm3_charge_cancel(); W.pending = 0; return 1; }
     weapon_dispatch(address);
     mm3_charge_dispatch();
     return 0;
 }
+void mm3_mods_personal_dispatch(void) { weapon_dispatch(0); mm3_charge_dispatch(); }
 
 void mm3_mods_input(uint8_t buttons[2])
 {
-    (void)buttons;
-    unsigned held = nes_input_game_buttons(1) & (CYC_GAME_L | CYC_GAME_R);
-    W.pending = s_weapons && held != (CYC_GAME_L | CYC_GAME_R) ?
-        (uint8_t)(held & ~W.previous) : 0;
-    W.previous = (uint8_t)held;
-    /* Native P2 debug behavior remains stock until a separate co-op adapter owns it. */
+    mm3_coop_input(buttons);
+    for (int seat = 0; seat < (mm3_coop_enabled() ? 2 : 1); seat++) {
+        WeaponState *w = &s_states[seat];
+        unsigned held = nes_input_game_buttons(seat + 1) & (CYC_GAME_L | CYC_GAME_R);
+        w->pending = s_weapons && held != (CYC_GAME_L | CYC_GAME_R) ? (uint8_t)(held & ~w->previous) : 0;
+        w->previous = (uint8_t)held;
+    }
 }
 
 void mm3_mods_power_on(void)
 {
-    memset(&W, 0, sizeof W);
+    memset(s_states, 0, sizeof s_states);
     s_tables_ready = 0;
     mm3_proto_power_on();
     mm3_charge_power_on();
     mm3_mods_refresh_hooks();
 }
-void mm3_mods_frame_end(void) { W.pending = 0; mm3_proto_frame_end(); mm3_charge_frame_end(); }
+void mm3_mods_frame_end(void) { s_states[0].pending = s_states[1].pending = 0; mm3_coop_frame_end(); mm3_proto_frame_end(); mm3_charge_frame_end(); }
 
 bool mm3_mods_option(const char *name, const char *value)
 {
-    if (strcmp(name, "--weapon-cycle")) return mm3_charge_option(name, value) || mm3_proto_option(name, value);
+    if (strcmp(name, "--weapon-cycle")) return mm3_coop_option(name, value) || mm3_charge_option(name, value) || mm3_proto_option(name, value);
     if (strcmp(value, "on") && strcmp(value, "off")) return false;
     weapons_set(!strcmp(value, "on"));
     return true;
@@ -149,23 +154,26 @@ bool mm3_mods_option(const char *name, const char *value)
 
 static int state_get(uint8_t *out, int cap)
 {
-    if (cap < (int)sizeof W) return -1;
-    memcpy(W.magic, "MW01", 4); W.enabled = (uint8_t)s_weapons;
-    memcpy(out, &W, sizeof W); return sizeof W;
+    int count = mm3_coop_enabled() ? 2 : 1, size = count * (int)sizeof W;
+    if (cap < size) return -1;
+    for (int i = 0; i < count; i++) { memcpy(s_states[i].magic, "MW01", 4); s_states[i].enabled = (uint8_t)s_weapons; }
+    memcpy(out, s_states, size); return size;
 }
 static int state_valid(const uint8_t *in, int len)
 {
     if (!len) return !s_weapons;
-    WeaponState next;
-    if (!in || len != sizeof next) return 0;
-    memcpy(&next, in, sizeof next);
-    return !memcmp(next.magic, "MW01", 4) && next.enabled == s_weapons &&
-        next.previous <= 3 && next.pending <= 3 && !next.reserved;
+    int count = mm3_coop_enabled() ? 2 : 1;
+    if (!in || len != count * (int)sizeof W) return 0;
+    for (int i = 0; i < count; i++) {
+        WeaponState next; memcpy(&next, in + i * sizeof next, sizeof next);
+        if (memcmp(next.magic, "MW01", 4) || next.enabled != s_weapons || next.previous > 3 || next.pending > 3 || next.reserved) return 0;
+    }
+    return 1;
 }
 static int state_set(const uint8_t *in, int len)
 {
     if (!state_valid(in, len)) return 0;
-    if (len) memcpy(&W, in, sizeof W); else memset(&W, 0, sizeof W);
+    if (len) memcpy(s_states, in, len); else memset(s_states, 0, sizeof s_states);
     return 1;
 }
 static void reset_mods(void) { weapons_set(0); }

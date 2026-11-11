@@ -3,6 +3,7 @@
 #include "mm3_charge.h"
 #include "mm3_mods.h"
 #include "mm3_proto.h"
+#include "mm3_coop.h"
 #include "mm3_widescreen.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -31,7 +32,8 @@ typedef struct {
     Shot shots[4];
     Picture building[4], shown[4];
 } Charge;
-static Charge C;
+static Charge s_states[2];
+#define C s_states[mm3_coop_seat()]
 static int s_on, s_requested, s_sound = 1, s_flash_enabled = 1;
 static char s_donor_path[2048];
 static CycMm4ChargeData s_data;
@@ -179,8 +181,8 @@ static int preserve_killing_shot(uint16_t address)
     return 0;
 }
 
-void mm3_charge_draw_begin(void) { memset(C.building, 0, sizeof C.building); }
-void mm3_charge_draw_latch(void) { memcpy(C.shown, C.building, sizeof C.shown); }
+void mm3_charge_draw_begin(void) { for (int i = 0; i < 2; i++) memset(s_states[i].building, 0, sizeof C.building); }
+void mm3_charge_draw_latch(void) { for (int i = 0; i < 2; i++) memcpy(s_states[i].shown, s_states[i].building, sizeof C.shown); }
 void mm3_charge_pose_begin(void)
 {
     int slot = ram(0x96);
@@ -204,25 +206,26 @@ void mm3_charge_pose_done(void)
     Picture *p = &C.building[slot];
     for (int i = 0; i < 64; i++) if (p->mask & (1ull << i)) memcpy(p->oam + i * 4, cyc_cpu_ram() + 0x200 + i * 4, 4);
 }
-static int picture_ready(const Picture *p)
+static int picture_ready_oam(const Picture *p, const uint8_t *oam)
 {
     if (!p->mask || p->sprite >= 7) return 0;
     for (int i = 0; i < 64; i++) if (p->mask & (1ull << i))
-        if (memcmp(p->oam + i * 4, cyc_render_oam() + i * 4, 4)) return 0;
+        if (memcmp(p->oam + i * 4, oam + i * 4, 4)) return 0;
     return 1;
 }
+static int picture_ready(const Picture *p) { return picture_ready_oam(p, cyc_render_oam()); }
 int mm3_charge_draw_ready(void)
 {
     if (!s_on) return 0;
     for (int i = 1; i <= 3; i++) if (picture_ready(&C.shown[i])) return 1;
     return 0;
 }
-int mm3_charge_place(int oam_slot, uint32_t *out)
+int mm3_charge_private_place(int oam_slot, uint32_t *out, int width, int origin, const uint8_t *opaque, const uint8_t *oam)
 {
     if (!s_on) return -1;
     for (int slot = 1; slot <= 3; slot++) {
         Picture *p = &C.shown[slot];
-        if (!(p->mask & (1ull << oam_slot)) || !picture_ready(p)) continue;
+        if (!(p->mask & (1ull << oam_slot)) || !picture_ready_oam(p, oam)) continue;
         for (int i = 0; i < oam_slot; i++) if (p->mask & (1ull << i)) return 0;
         Sprite *s = &s_sprites[p->sprite];
         for (int part = 0; part < s->count; part++) {
@@ -233,22 +236,24 @@ int mm3_charge_place(int oam_slot, uint32_t *out)
                 int row = attr & 0x80 ? 7 - sy : sy, bit = attr & 0x40 ? sx : 7 - sx;
                 int index = ((s_tiles[tile][row] >> bit) & 1) | (((s_tiles[tile][row + 8] >> bit) & 1) << 1);
                 if (!index) continue;
-                int x = p->x + s->x[p->right][part] + sx, y = p->y + 1 + s->y[p->right][part] + sy;
-                if (x < 0 || x >= 256 || y < 0 || y >= 240) continue;
+                int x = origin + p->x + s->x[p->right][part] + sx, y = p->y + 1 + s->y[p->right][part] + sy;
+                if (x < 0 || x >= width || y < 0 || y >= 240) continue;
                 if (!(cyc_render_line_mask(y) & 0x10) || (x < 8 && !(cyc_render_line_mask(y) & 4))) continue;
-                if ((p->behind || (attr & 0x20)) && cyc_frame_bg_opaque()[y * 256 + x]) continue;
+                if ((p->behind || (attr & 0x20)) && opaque && opaque[y * width + x]) continue;
                 uint8_t color = s_data.palette[attr & 1][index];
                 if (!(attr & 1) && p->charge >= HALF_AT && s_flash_enabled) {
                     int phase = ((p->charge >> 3) & 0xFC) | ((p->charge >> 1) & 3);
                     color = s_flash[index - 1][phase];
                 }
-                out[y * 256 + x] = cyc_render_color_value(color);
+                out[y * width + x] = cyc_render_color_value(color);
             }
         }
         return 0;
     }
     return -1;
 }
+int mm3_charge_place(int slot, uint32_t *out)
+{ return mm3_charge_private_place(slot, out, 256, 0, cyc_frame_bg_opaque(), cyc_render_oam()); }
 static int set_enabled(int requested, const char *path)
 {
     s_requested = requested;
@@ -265,7 +270,7 @@ static int set_enabled(int requested, const char *path)
     nes_mod_set_local_only("Mega Man 3 charged Mega Buster", s_on);
     return 1;
 }
-void mm3_charge_power_on(void) { memset(&C, 0, sizeof C); if (s_requested) set_enabled(1, s_donor_path[0] ? s_donor_path : nes_mod_external_rom_path("mega-man-3-usa.backport.mm4", "charge", "mm4-usa")); }
+void mm3_charge_power_on(void) { memset(s_states, 0, sizeof s_states); if (s_requested) set_enabled(1, s_donor_path[0] ? s_donor_path : nes_mod_external_rom_path("mega-man-3-usa.backport.mm4", "charge", "mm4-usa")); }
 void mm3_charge_frame_end(void) { if (s_on) cyc_mm4_audio_frame_end(); }
 void mm3_charge_audio_mix(int16_t *out, size_t n) { if (s_on) cyc_mm4_audio_mix(out, n); }
 bool mm3_charge_option(const char *name, const char *value)
@@ -287,11 +292,12 @@ static void activate(void)
 }
 static int state_get(uint8_t *out, int capacity)
 {
-    if (capacity < (int)sizeof C) return -1;
-    memcpy(C.magic, "MC01", 4); C.enabled = s_on;
-    memcpy(out, &C, sizeof C); return sizeof C;
+    int count = mm3_coop_enabled() ? 2 : 1, size = count * (int)sizeof C;
+    if (capacity < size) return -1;
+    for (int i = 0; i < count; i++) { memcpy(s_states[i].magic, "MC01", 4); s_states[i].enabled = s_on; }
+    memcpy(out, s_states, size); return size;
 }
-static int state_valid(const uint8_t *in, int n)
+static int state_valid_one(const uint8_t *in, int n)
 {
     if (!n) return !s_on;
     Charge next; if (!in || n != sizeof next) return 0; memcpy(&next, in, n);
@@ -307,7 +313,15 @@ static int state_valid(const uint8_t *in, int n)
     }
     return 1;
 }
-static int state_set(const uint8_t *in, int n) { if (!state_valid(in, n)) return 0; if (n) memcpy(&C, in, n); else memset(&C, 0, sizeof C); return 1; }
+static int state_valid(const uint8_t *in, int n)
+{
+    if (!n) return !s_on;
+    int count = mm3_coop_enabled() ? 2 : 1;
+    if (!in || n != count * (int)sizeof C) return 0;
+    for (int i = 0; i < count; i++) if (!state_valid_one(in + i * sizeof C, sizeof C)) return 0;
+    return 1;
+}
+static int state_set(const uint8_t *in, int n) { if (!state_valid(in, n)) return 0; if (n) memcpy(s_states, in, n); else memset(s_states, 0, sizeof s_states); return 1; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {

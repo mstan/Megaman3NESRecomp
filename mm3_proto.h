@@ -15,3 +15,5 @@ void mm3_proto_tcp_setup(void);
 void mm3_proto_refresh_hooks(void);
 int mm3_proto_shot_limit(void);
 int mm3_proto_muzzle_y(int native_offset);
+uint64_t mm3_proto_private_mask(void);
+void mm3_proto_paint_private(uint32_t *out, int width, int origin, const uint8_t *opaque);

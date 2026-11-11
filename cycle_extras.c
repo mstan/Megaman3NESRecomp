@@ -7,6 +7,7 @@
 #include "mm3_widescreen.h"
 #include "mm3_mods.h"
 #include "mm3_charge.h"
+#include "mm3_coop.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -27,6 +28,7 @@ static void power_on(void *ctx)
     (void)ctx;
     cyc_set_extra_scanlines(reduce_slowdown ? 128u : 0u);
     mm3_ws_power_on();
+    mm3_coop_power_on();
     mm3_mods_power_on();
 }
 
@@ -128,6 +130,7 @@ static void tcp_setup(void *ctx)
     cyc_tcp_register("mm3_slowdown", "query/set {enabled: bool} slowdown reduction", tcp_slowdown);
     cyc_tcp_register("mm3_ws", "widescreen state; set {mode: off|16:9|21:9|32:9|fit}", tcp_widescreen);
     mm3_mods_tcp_setup();
+    mm3_coop_tcp_setup();
 }
 #endif
 
@@ -167,6 +170,7 @@ static bool option(void *ctx, const char *name, const char *value)
 static void begin(void *ctx)
 {
     (void)ctx;
+    mm3_coop_frame_begin();
     if (!stats) return;
     nmi = busy = complete = 0;
     start_cycles = cyc_cycle_count();
@@ -211,7 +215,10 @@ const CycHostExtras *cyc_host_extras(void)
         {"--proto-mode", true, "protoman|megaman: character traits or normal-stat reskin"},
         {"--proto-start", true, "protoman|megaman: starting solo character"},
         {"--charge", true, "on|off: optional MM4 charged Mega Buster"},
-        {"--mm4-donor", true, "FILE: verified local Mega Man 4 (USA) source image"}
+        {"--mm4-donor", true, "FILE: verified local Mega Man 4 (USA) source image"},
+        {"--coop", true, "on|off: simultaneous native players (development)"},
+        {"--coop-p1", true, "megaman|protoman: complementary co-op roster"},
+        {"--coop-test-poke", true, "FRAME:SEAT:HEXADDR:HEXVALUE: bounded personal QA precondition"}
     };
     static const CycHostExtras extras = {
         .load_setting = load_setting, .save_settings = save_settings, .power_on = power_on,
