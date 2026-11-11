@@ -206,5 +206,12 @@ the player who opened the menu confirms resume with Start. Energy Tanks use one
 shared stock and refill only the requesting player, including simultaneous use
 of the last tank. The native menu layout, cursors, weapon graphics and Rush
 transformation timing are retained, with a Proto Man portrait for that player.
+Hold Select for 90 gameplay frames to withdraw while a partner is active. Release
+and press Select again to rejoin beside a partner on clear, safe ground. This
+retains HP and equipment; a held or unsafe rejoin press never queues for later.
+The last active player cannot withdraw. Native checkpoint recovery restores a
+dead partner with full HP and Buster selected, retaining their remaining ammo.
+A team retry also retains each player's own ammo. Departure and arrival use the
+native teleport animation and movement, with contact protection during arrival.
 This remains a development slice: boss/script and transition coverage, full
 lifecycle/camera behavior and online qualification are pending.

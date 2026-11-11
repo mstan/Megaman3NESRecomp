@@ -1,0 +1,17 @@
+# Current-build prerequisite: stable Snake Man co-op gameplay after frame7799.
+# Launch with --coop on --extra-scanlines 0 --widescreen off --charge off.
+# Per-seat fixture via --coop-test-poke at7800: P1 x160/y180, P2 x220/y180,
+# state0, nonzero HP, no active personal projectiles. Keep native stage flags.
+# Removing ordinary actors isolates the lifecycle, not world/combat acceptance.
+7800 1:-
+7800 2:-
+7800 POKE 310-31F 00
+7802 2:SELECT
+# At frame7890 fewer than90 gameplay updates have elapsed: P2 remains active.
+# By7950 native departure has completed; continued Select cannot rejoin.
+7940 2:-
+7950 2:SELECT
+7951 2:-
+# At8030 P2 has returned with the same HP, weapon and ammo. P1 is unaffected.
+# Save at7900 and7954 for cold departure and arrival continuation respectively;
+# compare native/interpreter full state, RAM, presented pixels and PCM tails.

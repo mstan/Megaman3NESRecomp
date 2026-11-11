@@ -825,6 +825,12 @@ bytes = "86 00 A6 DA 85 01 B5 DC"
 include_internal = true
 
 [[mod_function_hook]]
+id = "mm3.coop.retry-entry"
+addr = 0xCC18
+bytes = "A5 22 85 F5 20 6B FF A0 00"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.coop.stage-entry"
 addr = 0xC9B3
 bytes = "A9 9C 85 A2 A9 E8 85 51"

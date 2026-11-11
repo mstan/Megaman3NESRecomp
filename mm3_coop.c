@@ -35,6 +35,18 @@ typedef struct {
     uint64_t updates, failures, contacts[2], hits[2], handoffs;
 } Coop;
 static Coop C;
+enum { TELE_NONE, TELE_OUT, TELE_HIDDEN, TELE_IN, TELE_OPEN };
+typedef struct {
+    char magic[4];
+    uint8_t enabled, withdrawn, advanced, hold[2], armed[2], previous[2], teleport[2];
+    int16_t floor[2];
+    uint8_t restarting, revive;
+    int8_t checkpoint;
+    uint64_t withdrawals[2], rejoins[2];
+} Lifecycle;
+static Lifecycle L;
+static uint8_t s_checkpoints[23][8];
+static int s_checkpoint_tables;
 static int s_on, s_roster, s_inside, s_projectiles;
 static unsigned s_count;
 static uint16_t s_address[PERSONAL], s_index[2048];
@@ -71,7 +83,7 @@ int mm3_coop_read(int seat, unsigned a)
     if (a >= 2048 || seat < 0 || seat > 1) return 0;
     return s_on && C.initialized && s_index[a] ? C.players[seat].ram[s_index[a] - 1] : ram(a);
 }
-static int alive(int seat) { return (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
+static int alive(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
 static void sound(unsigned id)
 {
     unsigned next = ram(0xDA) & 7;
@@ -82,15 +94,45 @@ static void controls(Player *p)
     poke(0x14, p->held & ~p->previous); poke(0x16, p->held);
     poke(0x15, 0); poke(0x17, 0); poke(0x98, 0);
 }
+static int checkpoint(void)
+{
+    if (!s_checkpoint_tables) {
+        size_t size = cyc_mod_copy_cart_payload(NULL,0); uint8_t *bytes = (uint8_t *)malloc(size);
+        if (!bytes || size < 0x40000 || cyc_mod_copy_cart_payload(bytes,size) != size) {
+            free(bytes); s_checkpoint_tables = -1; C.failures++; return -1;
+        }
+        for (int stage = 0; stage < 23; stage++) memcpy(s_checkpoints[stage],bytes + stage*8192 + 0xAF8,8);
+        free(bytes); s_checkpoint_tables = 1;
+    }
+    if (s_checkpoint_tables < 0 || ram(0x22) >= 23) return -1;
+    int index = -1;
+    for (int i = 0; i < 8 && s_checkpoints[ram(0x22)][i] != 0xFF; i++) {
+        if (ram(0x6F) < s_checkpoints[ram(0x22)][i]) break;
+        index = i;
+    }
+    return index;
+}
 static void initialize(void)
 {
+    int retain = L.restarting;
+    uint8_t ammo[2][11];
+    if (retain) for (int seat = 0; seat < 2; seat++) for (int a = 0; a < 11; a++)
+        ammo[seat][a] = C.players[seat].ram[s_index[0xA3 + a] - 1];
+    memset(&L, 0, sizeof L);
+    L.checkpoint = (int8_t)checkpoint();
     mm3_charge_new_team();
+    if (retain && !mm3_mods_equip(0,0)) C.failures++;
     capture(&C.players[C.anchor]);
     uint8_t held = C.players[C.anchor ^ 1].held, previous = C.players[C.anchor ^ 1].previous;
     C.players[C.anchor ^ 1] = C.players[C.anchor];
     Player *p = &C.players[C.anchor ^ 1];
     p->held = held; p->previous = previous;
     for (unsigned slot = 1; slot < 16; slot++) p->ram[s_index[0x300 + slot] - 1] = 0;
+    if (retain) {
+        for (int seat = 0; seat < 2; seat++) for (int a = 0; a < 11; a++)
+            C.players[seat].ram[s_index[0xA3 + a] - 1] = ammo[seat][a];
+        project(&C.players[C.anchor]);
+    }
     C.stage = ram(0x22); C.initialized = 1;
 }
 /* Isolated native controllers may use personal character/charge hooks, but
@@ -181,19 +223,37 @@ int mm3_coop_dispatch(void)
     addresses();
     if (ram(0xF8) == 1 || ram(0x50) || ram(0x30) >= 0x0C || (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
+    L.advanced = 1;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1;
     CycModRegs original = {0}, r; cyc_mod_regs(&original); r = original;
     uint8_t input[4] = {ram(0x14),ram(0x15),ram(0x16),ram(0x17)}, scratch[16];
     memcpy(scratch, cyc_cpu_ram(), sizeof scratch);
     s_inside = 1; C.current = (uint8_t)guest; project(&C.players[guest]); controls(&C.players[guest]);
-    mm3_mods_personal_dispatch();
-    int ok = native_call(0xCD34, &r, 0);
+    int teleport = L.teleport[guest];
+    if (teleport) { poke(0x14, 0); poke(0x16, 0); poke(0x39, 2); }
+    else mm3_mods_personal_dispatch();
+    int ok = 1;
+    if (teleport == TELE_IN) {
+        int y = ram(0x3C0) + 16;
+        if (y >= L.floor[guest]) {
+            y = L.floor[guest]; L.teleport[guest] = TELE_OPEN;
+            poke(0x5A0, 0); poke(0x5E0, 0); sound(0x34);
+        }
+        poke(0x3C0, y);
+    } else if (teleport != TELE_HIDDEN) ok = native_call(0xCD34, &r, 0);
+    if (ok && teleport == TELE_OUT && ram(0x3E0)) {
+        L.teleport[guest] = TELE_HIDDEN; poke(0x300, 0);
+    } else if (ok && teleport == TELE_OPEN && !ram(0x30)) {
+        if (L.withdrawn & (1u << guest)) L.rejoins[guest]++;
+        L.teleport[guest] = TELE_NONE; L.withdrawn &= (uint8_t)~(1u << guest);
+        poke(0x39, 60); C.players[guest].previous = C.players[guest].held;
+    }
     if (ok && ram(0x3D)) {
         poke(0x30, ram(0x3D)); poke(0x3D, 0);
         if (ram(0x30) == 0x0E) { if (!alive(C.anchor)) sound(0xF2); sound(0x17); }
     }
-    if (ok) ok = native_call(0x800C, &r, 1);
+    if (ok && teleport != TELE_HIDDEN) ok = native_call(0x800C, &r, 1);
     if (ok) { capture(&C.players[guest]); C.updates++; } else C.failures++;
     C.current = C.anchor; project(&C.players[C.anchor]); s_inside = 0;
     for (unsigned i = 0; i < 4; i++) poke(0x14 + i, input[i]);
@@ -239,10 +299,94 @@ void mm3_coop_input(uint8_t buttons[2])
     }
     mm3_coop_menu_input(buttons);
 }
+static int safe_rejoin(int peer, int *x, int *y)
+{
+    static const int offsets[] = {24,-24,0,8,-8,16,-16,32,-32};
+    if (!alive(peer) || L.teleport[peer] || mm3_coop_read(peer,0x30) || mm3_coop_read(peer,0x3E0)) return 0;
+    int yy = mm3_coop_read(peer,0x3C0), base = mm3_coop_read(peer,0x360) + mm3_coop_read(peer,0x380)*256;
+    if (yy < 16 || yy > 222 || !cyc_mod_isolate_begin()) return 0;
+    int found = 0; project(&C.players[peer]);
+    CycModRegs r = {0}; cyc_mod_regs(&r); r.x = 0;
+    for (unsigned i = 0; i < sizeof offsets / sizeof offsets[0] && !found; i++) {
+        int xx = base + offsets[i]; if (xx < 8 || xx > 65527) continue;
+        poke(0x360,xx); poke(0x380,xx >> 8); poke(0x3C0,yy);
+        r.x = 0; r.y = 0;
+        int ok = cyc_mod_call(0xE8D6,&r) && ram(0x42) == 0x10 && ram(0x43) == 0x10 && ram(0x44) == 0x10;
+        r.x = 0; r.y = 1;
+        ok = ok && cyc_mod_call(0xE8D6,&r) && !(ram(0x10) & 0xF0);
+        /* Check the middle of the standing body as well as its native head. */
+        poke(0x3C0,yy + 12); r.x = 0; r.y = 1;
+        ok = ok && cyc_mod_call(0xE8D6,&r) && !(ram(0x10) & 0xF0);
+        if (ok) { *x = xx; *y = yy; found = 1; }
+    }
+    cyc_mod_isolate_end(); return found;
+}
+static void transport(int seat, int arrival, int x, int y, int heal)
+{
+    int previous = C.current; capture(&C.players[previous]);
+    C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
+    if (heal) {
+        uint8_t freeze[2] = {ram(0x5B),ram(0x5C)};
+        if (!mm3_mods_equip(0,0)) C.failures++;
+        poke(0x5B,freeze[0]); poke(0x5C,freeze[1]); poke(0xA2,0x9C);
+        poke(0x3C,0); poke(0x3F,0);
+    }
+    for (int slot = 1; slot < 16; slot++) poke(0x300 + slot,0);
+    poke(0x32,0); poke(0x33,0); poke(0x36,0); poke(0x37,0); poke(0x38,0);
+    poke(0x3D,0); poke(0xB5,0); poke(0x39,2); poke(0x500,0);
+    poke(0x5C0,0x13); poke(0x5E0,0); poke(0x440,0xFF); poke(0x460,0xFF);
+    if (arrival) {
+        poke(0x300,0x80); poke(0x30,4); poke(0x5A0,0);
+        poke(0x360,x); poke(0x380,x >> 8); poke(0x3C0,y < 36 ? y - 16 : 20); poke(0x3E0,0);
+        L.floor[seat] = (int16_t)y; L.teleport[seat] = TELE_IN;
+    } else {
+        /* The original DBE1 beam animation and acceleration run in a private
+         * call. Its stage-clear writes are outside the personal commit. */
+        poke(0x300,0x81); poke(0x30,0x0D); poke(0x5A0,4);
+        L.teleport[seat] = TELE_OUT; L.withdrawn |= (uint8_t)(1u << seat);
+        L.withdrawals[seat]++; sound(0x34);
+    }
+    C.players[seat].previous = C.players[seat].held; capture(&C.players[seat]);
+    C.current = (uint8_t)previous; project(&C.players[previous]);
+}
+static void select_tick(void)
+{
+    int gameplay = L.advanced && !mm3_coop_menu_active() && !ram(0x50) && ram(0xF8) != 1;
+    L.advanced = 0;
+    for (int seat = 0; seat < 2; seat++) {
+        int held = (C.players[seat].held & 0x20) != 0, fresh = held && !L.previous[seat];
+        L.previous[seat] = (uint8_t)held;
+        if (!held) { L.armed[seat] = 1; L.hold[seat] = 0; }
+        if (!gameplay || L.teleport[seat] == TELE_OUT || L.teleport[seat] >= TELE_IN || !alive(seat ^ 1) || L.teleport[seat ^ 1]) {
+            L.hold[seat] = 0; continue;
+        }
+        unsigned state = mm3_coop_read(seat,0x30), peer_state = mm3_coop_read(seat ^ 1,0x30);
+        if (peer_state >= 6 || ram(0x5A) || mm3_coop_read(seat ^ 1,0x3D)) { L.hold[seat] = 0; continue; }
+        if (L.withdrawn & (1u << seat)) {
+            int x,y;
+            if (fresh && L.armed[seat] && safe_rejoin(seat ^ 1,&x,&y)) transport(seat,1,x,y,0);
+        } else if (!alive(seat) || state >= 6 || mm3_coop_read(seat,0x3D)) L.hold[seat] = 0;
+        else if (held && L.armed[seat] && ++L.hold[seat] >= 90) {
+            transport(seat,0,0,0,0); L.hold[seat] = 0; L.armed[seat] = 0;
+        }
+    }
+    if (gameplay && !ram(0x5A)) {
+        int next = checkpoint();
+        if (next > L.checkpoint) {
+            L.checkpoint = (int8_t)next;
+            for (int seat = 0; seat < 2; seat++) if (!(L.withdrawn & (1u << seat)) && !alive(seat)) L.revive |= (uint8_t)(1u << seat);
+        }
+        for (int seat = 0; seat < 2; seat++) if ((L.revive & (1u << seat)) && !L.teleport[seat]) {
+            int x,y;
+            if (safe_rejoin(seat ^ 1,&x,&y)) { transport(seat,1,x,y,1); L.revive &= (uint8_t)~(1u << seat); }
+        }
+    }
+}
 void mm3_coop_frame_end(void)
 {
     if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
+    select_tick();
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
         C.anchor ^= 1; C.current = C.anchor; project(&C.players[C.anchor]);
         poke(0x14, 0); poke(0x16, C.players[C.anchor].held); C.handoffs++;
@@ -252,6 +396,7 @@ void mm3_coop_frame_end(void)
 }
 void mm3_coop_frame_begin(void)
 {
+    L.advanced = 0;
     if (!s_on) return;
     if (C.initialized && !C.scope && C.stage != ram(0x22)) {
         C.initialized = C.ai = 0; C.current = C.anchor;
@@ -282,6 +427,7 @@ void mm3_coop_draw(void)
     if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 || ram(0x30) >= 0x0C) return;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1, camera = ram(0xF9) * 256 + ram(0xFC);
+    if (L.teleport[guest] == TELE_HIDDEN) { C.players[guest].building.count = 0; return; }
     C.current = (uint8_t)guest; project(&C.players[guest]);
     int shifted = ram(0x380) * 256 + ram(0x360) - 128;
     if (shifted < 0) shifted = 0;
@@ -413,6 +559,12 @@ static int stage_entry(uint16_t address)
     }
     return 0;
 }
+static int retry_entry(uint16_t address)
+{
+    (void)address;
+    if (s_on && !cyc_mod_isolated()) L.restarting = C.initialized && C.stage == ram(0x22);
+    return 0;
+}
 static void enabled(int on)
 {
     s_on = on != 0;
@@ -420,6 +572,7 @@ static void enabled(int on)
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.retry-entry", s_on);
     mm3_coop_menu_refresh();
     cyc_mod_set_return_hook(s_on ? after_return : NULL);
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
@@ -427,7 +580,9 @@ static void enabled(int on)
 }
 void mm3_coop_power_on(void)
 {
-    memset(&C, 0, sizeof C); addresses(); mm3_coop_menu_power_on();
+    memset(&C, 0, sizeof C); memset(&L, 0, sizeof L);
+    s_checkpoint_tables = 0;
+    addresses(); mm3_coop_menu_power_on();
     if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
     enabled(s_on);
 }
@@ -474,13 +629,35 @@ static int valid(const uint8_t *in, int size)
 }
 static int set(const uint8_t *in, int size)
 { if (!valid(in, size)) return 0; if (size) memcpy(&C, in, size); else memset(&C, 0, sizeof C); return 1; }
+static int life_get(uint8_t *out, int cap)
+{
+    if (cap < (int)sizeof L) return -1;
+    memcpy(L.magic,"CL01",4); L.enabled = s_on; memcpy(out,&L,sizeof L); return sizeof L;
+}
+static int life_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    Lifecycle n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    if (memcmp(n.magic,"CL01",4) || n.enabled != s_on || n.withdrawn > 2 || n.advanced > 1 || n.restarting > 1 || n.revive > 3 || n.checkpoint < -1 || n.checkpoint > 7) return 0;
+    for (int i = 0; i < 2; i++) {
+        int withdrawn = (n.withdrawn & (1u << i)) != 0;
+        if (n.hold[i] > 90 || n.armed[i] > 1 || n.previous[i] > 1 ||
+            n.teleport[i] > TELE_OPEN || n.floor[i] < 0 || n.floor[i] > 239 ||
+            (withdrawn && n.teleport[i] == TELE_NONE) ||
+            (!withdrawn && (n.teleport[i] == TELE_OUT || n.teleport[i] == TELE_HIDDEN))) return 0;
+    }
+    return 1;
+}
+static int life_set(const uint8_t *in, int size)
+{ if (!life_valid(in,size)) return 0; if (size) memcpy(&L,in,size); else { memset(&L,0,sizeof L); L.checkpoint = -1; } return 1; }
 static void reset(void) { enabled(0); s_roster = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {
     (void)line; char b[512];
-    snprintf(b, sizeof b, "\"enabled\":%s,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
+    snprintf(b, sizeof b, "\"enabled\":%s,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"withdrawn\":%u,\"teleport\":[%u,%u],\"hold\":[%u,%u],\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
         s_on ? "true" : "false", C.initialized, C.anchor, C.current, (unsigned long long)C.updates, (unsigned long long)C.failures,
+        L.withdrawn,L.teleport[0],L.teleport[1],L.hold[0],L.hold[1],
         mm3_coop_read(0,0x360) + mm3_coop_read(0,0x380)*256,mm3_coop_read(0,0x3C0),mm3_coop_read(0,0xA2)&31,
         mm3_coop_read(1,0x360) + mm3_coop_read(1,0x380)*256,mm3_coop_read(1,0x3C0),mm3_coop_read(1,0xA2)&31);
     cyc_tcp_ok(id, b);
@@ -499,7 +676,10 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_function_entry_plugin("mm3.coop.enemy-done", 0x808B, enemy_done);
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);
+    nes_mod_register_function_entry_plugin("mm3.coop.retry-entry", 0xCC18, retry_entry);
     nes_mod_register_reset_callback(reset);
     nes_mod_register_savestate_hook("mm3.coop", get, set);
     nes_mod_register_savestate_validator("mm3.coop", valid);
+    nes_mod_register_savestate_hook("mm3.coop-lifecycle",life_get,life_set);
+    nes_mod_register_savestate_validator("mm3.coop-lifecycle",life_valid);
 }
