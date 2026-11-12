@@ -221,8 +221,10 @@ Native horizontal shutters and vertical scrolls carry the partner through the
 same camera coroutine while preserving personal HP and ammo. The Snake Man
 route has been checked from native checkpoint retry through player-two damage,
 boss defeat, weapon award, password screen and entry into the next stage.
+Either controller can lead native shutter and ladder transitions. Boss
+introductions keep one native health-bar fill while both controllers wait.
 This remains a development slice: additional boss/script and transition
-coverage, room leadership and online qualification are pending.
+coverage, optional wait-for-both behavior and online qualification are pending.
 The development `--coop-view shared|split|p1|p2` option selects the view. Separate
 views use two fixed 256-pixel
 simulation rectangles. Native enemy construction, nearest-player targeting,

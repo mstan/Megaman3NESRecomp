@@ -6,6 +6,11 @@
 # Both bodies must follow the native shutter/scroll coroutine to room13/page25.
 # Save during frames8600..8660: the real scroll coroutine must still be active.
 # Native/interpreter and cold continuation compare state, RAM, pixels and PCM.
+# Repeat with P1 idle and P2 holding Right. The native anchor must become P2,
+# both inventories must remain personal, and the real Snake Man intro must
+# finish into AI D4. Intro AI5D must not remain waiting on an isolated HP fill.
+# Continue with actual P2 Buster damage and a lethal native hit, weapon award,
+# password/selection controls and next-stage entry; do not assign success flags.
 8500 1:RIGHT
 8500 2:-
 9250 1:-

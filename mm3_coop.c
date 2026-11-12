@@ -74,6 +74,7 @@ static struct { uint32_t frame; uint16_t address; uint8_t seat, value; } s_pokes
 static int s_poke_count;
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 2047]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
+static void controls(Player *p);
 int mm3_coop_enabled(void) { return s_on; }
 int mm3_coop_scene_active(void) { return s_on && C.initialized; }
 int mm3_coop_independent(void) { return s_on && s_view != 0; }
@@ -174,19 +175,10 @@ static void victory_follow(void)
     C.current = C.anchor; project(&C.players[C.anchor]); T.active = 2; T.priming = 0;
     follow_partner();
 }
-static int before_camera(uint16_t address)
+static int source_camera(int next)
 {
-    (void)address;
-    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || T.active ||
-        cyc_mod_isolated() || ram(0x50) || ram(0xF8) || ram(0xFA) || ram(0xFD) || !(ram(0x2A)&0x20)) return 0;
-    int old = ram(0xF9)*256+ram(0xFC),x = ram(0x360)+ram(0x380)*256;
-    if (!simulation_alive(C.anchor) || (x >= old && x < old+256)) return 0;
-    int lo,hi;
-    if (!mm3_ws_room_limits(&lo,&hi)) return 0;
-    int next = x-128;
-    if (next < lo) next = lo;
-    if (next+256 > hi) next = hi-256;
-    if (next == old) return 0;
+    int old = ram(0xF9)*256+ram(0xFC);
+    if (next == old) return 1;
     int cursor = ram(0x29)*32+ram(0x24)+next/8-old/8;
     int base = ram(0xF9)-ram(0x2D);
     /* Finish the picture already drawn before replacing the PPU's backing
@@ -199,7 +191,63 @@ static int before_camera(uint16_t address)
     /* Pending packets address the previous physical ring. Native camera and
      * room coroutines resume with the new ring and retain their own gates. */
     poke(0x19,0);poke(0x1A,0);
-    return 0;
+    return 1;
+}
+/* Only select which existing controller asks the native camera to proceed.
+ * Door enemies, boss gates, events and room progression remain cartridge code. */
+static int exit_request(int seat,int lo,int hi,int *camera)
+{
+    if (!simulation_alive(seat) || L.teleport[seat] || simulation_read(seat,0x30) >= 0x0C) return 0;
+    int x = simulation_read(seat,0x360)+simulation_read(seat,0x380)*256;
+    if (x < lo || x >= hi) return 0;
+    int next = x-128;
+    if (next < lo) next = lo;
+    if (next+256 > hi) next = hi-256;
+    *camera = next;
+    int page = x>>8,room = ram(0x2B);
+    if ((ram(0x2A)&0x20) && page == (hi-1)/256 && (x&255) >= 0xE5 &&
+        (cyc_mod_peek((uint16_t)(0xAA41+room))&0xE0) == 0x20) {
+        *camera = hi-256;return 1;
+    }
+    int y = simulation_read(seat,0x3C0),direction = 0;
+    if (y >= 0xE8 && !(simulation_read(seat,0x3E0)&0x80)) direction = 0x40;
+    else if (y < 9 && simulation_read(seat,0x30) == 3) direction = 0x80;
+    if (!direction || (next&255)) return 0;
+    /* The original link validator is finite: its mapper/RAM writes stay
+     * inside this scope. The real camera repeats it before actual scrolling. */
+    CycModRegs r = {0};cyc_mod_regs(&r);
+    int base = ram(0xF9)-ram(0x2D);
+    if (!cyc_mod_isolate_begin()) { C.failures++;return 0; }
+    if (seat != C.current) project(&C.players[seat]);
+    poke(0xF9,next>>8);poke(0xFC,0);poke(0x2D,(next>>8)-base);poke(0x10,direction);
+    int ok = cyc_mod_call(0xE3C7,&r);
+    cyc_mod_isolate_end();
+    if (!ok) { C.failures++;return 0; }
+    return r.p&1 ? direction : 0;
+}
+static int before_camera(uint16_t address)
+{
+    (void)address;
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || T.active ||
+        cyc_mod_isolated() || ram(0x50) || ram(0xF8) || ram(0xFA) || ram(0xFD) || !simulation_alive(C.anchor)) return 0;
+    int lo,hi;
+    if (!mm3_ws_room_limits(&lo,&hi)) return 0;
+    int entry = 0;
+    if (exit_request(C.anchor,lo,hi,&entry)) { source_camera(entry);return 0; }
+    int guest = C.anchor^1;
+    if (exit_request(guest,lo,hi,&entry)) {
+        capture(&C.players[C.anchor]);
+        C.anchor = C.current = (uint8_t)guest;project(&C.players[guest]);
+        controls(&C.players[guest]);C.handoffs++;
+        source_camera(entry);return 0;
+    }
+    if (!(ram(0x2A)&0x20)) return 0;
+    int old = ram(0xF9)*256+ram(0xFC),x = ram(0x360)+ram(0x380)*256;
+    if (x >= old && x < old+256) return 0;
+    int next = x-128;
+    if (next < lo) next = lo;
+    if (next+256 > hi) next = hi-256;
+    source_camera(next);return 0;
 }
 static int transition_begin(uint16_t address)
 {
@@ -355,6 +403,11 @@ static int pool_boundary(uint16_t address)
     if (s_projectiles) return r.x >= 16;
     if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || r.x < 16 || r.x >= 32 ||
         !(ram(0x300 + r.x) & 0x80) || ram(0x320 + r.x) >= 0xA0) return 0;
+    unsigned routine = ram(0x320+r.x);
+    /* These actors start the one shared HP-bar script on the native anchor.
+     * A nearest-player projection would put that script in an isolated guest
+     * controller, where its global fill writes are intentionally discarded. */
+    if ((routine >= 0x58 && routine <= 0x5F) || (routine >= 0x90 && routine <= 0x97)) return 0;
     capture_combat(&C.players[C.current]);
     int target_x = ram(0x360 + r.x) + ram(0x380 + r.x) * 256, target_y = ram(0x3C0 + r.x);
     int chosen = C.current, best = 0x7FFFFFFF;
@@ -391,6 +444,10 @@ int mm3_coop_dispatch(void)
         (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && alive(C.anchor^1))) ||
         (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
+    if (ram(0x30) == 9) {
+        C.players[C.anchor^1].previous = C.players[C.anchor^1].held;
+        return 0;
+    }
     L.advanced = 1;
     capture(&C.players[C.anchor]);
     int guest = C.anchor ^ 1;

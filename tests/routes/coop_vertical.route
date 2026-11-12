@@ -17,3 +17,10 @@
 7800 1:UP
 7800 2:-
 7803 1:-
+# Repeat the upward boundary with P2 climbing and P1 on the room's floor;
+# the native anchor must become P2, with personal HP/ammo retained.
+# From the room1/page4 destination at7920, set P1 x4:88/y232, air1,
+# yscreen0 and zero Y velocity; P2 x4:80/y180, ground0. Release both inputs.
+# This bypasses traversal to the boundary, not the authored link or scroll.
+# The original downward scroll must return both to room0/page3 with P1 leading.
+# Save during7960 and compare native/interpreter and cold state/picture/PCM.
