@@ -28,3 +28,33 @@ The implementation executes the retail Coil prefix at `$CE61`, its ammo routine
 at `$DED8`, and the rider's airborne tail at `$D007`. The ammo hook stops only
 the isolated prefix's known `$CE84` call frame; the live CPU and stack continue
 unchanged. Marine, Jet and other weapon interactions require their own checks.
+
+## Two owners of a timed Spark effect
+
+Give both seats Spark Shock, select it through L/R, and fire at the same
+ordinary enemy with the second shot about 60 native updates later. Both
+personal `$5B/$5C` links must name that shared enemy, with separate live native
+shock timers and one energy spent by each owner. Switching either seat's
+weapon must release only its own shock. After the first timer expires the
+other shock must still hold the enemy; the second expiry releases it naturally.
+Check Native/interpreter equality and a cold continuation saved with both
+shocks active, including exact state, RAM, pictures and PCM suffix.
+
+## Top Spin contact ownership
+
+Give both seats Top Spin energy. Select it through L/R on one seat, keep the
+other away, and use real airborne B contact against an ordinary enemy. The
+enemy must receive native damage, the spinner must pay its native contact
+cost, and the other seat's inventory must remain unchanged. Repeat with seats
+exchanged and compare Native/interpreter and cold pre-attack state, pictures
+and PCM. Positioning and an enemy HP prerequisite may simplify the setup;
+never force its defeat, hit acknowledgement or the player's spin state.
+
+## Gemini linked-projectile ownership
+
+Select Gemini Laser through L/R on both seats and fire both native lasers.
+Arrange an ordinary enemy in front of one shooter while the other fires away.
+The real impact must damage that enemy and clear the impact owner's three
+linked segments, while all three partner segments remain active. Each shooter
+pays its own native two-energy cost. Exchange the impact owner, compare Native
+and interpreter, and check cold state/pictures/PCM with the partner laser live.
