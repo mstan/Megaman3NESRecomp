@@ -16,6 +16,7 @@ int mm3_coop_spawn_project(int seat);
 int mm3_coop_seat(void);
 int mm3_coop_character(int seat);
 int mm3_coop_read(int seat, unsigned address);
+int mm3_coop_world_slot(unsigned slot);
 int mm3_coop_dispatch(void);
 void mm3_coop_contact(void);
 void mm3_coop_weapon_hit(unsigned entry);

@@ -33,3 +33,19 @@ the original warp states `$11`, `$12`, then `$00`; the companion follows while
 retaining personal health, ammunition and character. Check both seats entering
 the Hard Man arena, independent controls after arrival, native/interpreter
 equality, and a cold continuation saved during the native room refill.
+
+A refight death creates the native return pod in slot 14 and defeated remnant
+in slot 15. These two records belong to the shared world until the original
+return warp completes. Check that either player's real kill creates one copy,
+personal weapon changes preserve both records, and the other player can use
+the return pod. The original hub must retain the defeat bit and omit that
+boss's pod. Save immediately after the effects appear and during the native
+refill; compare both cold continuations, native/interpreter output and PCM.
+After actual independent-view draws, each paused Split half must match its
+corresponding P1/P2 view, including the native shared pod and personal colors.
+
+For the Kamegoro encounter, the remaining-wave health counter is `$B0`, while
+`$B2` is a UI flag. A high-level final-wave prerequisite may reduce `$B0` to
+the real current wave's health cost and the living turtle to one HP. The real
+Buster hit must kill that turtle, let the native maker scan finish, and advance
+to the next fortress stage. Never set the defeat or stage-clear flags.

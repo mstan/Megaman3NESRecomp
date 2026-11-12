@@ -480,7 +480,7 @@ static int shield(uint16_t address)
     int front = (ram(0x31) & 1) ? dx : -dx;
     if (dy < -20 || dy > 4 || front < 6 || front > 22) return 0;
     int target;
-    for (target = 14; target <= 15; target++) if (!(ram(0x300 + target) & 0x80)) break;
+    for (target = 14; target <= 15; target++) if (!mm3_coop_world_slot((unsigned)target) && !(ram(0x300 + target) & 0x80)) break;
     if (target <= 15 && cyc_mod_isolate_begin()) {
         uint8_t record[24];
         poke(0xA0, 0);
@@ -535,7 +535,7 @@ static int reflected_hit(uint16_t address)
         if (!R.remaining) { R.running = 0; return 0; }
     } else {
         if (!S.reflected || r.x < 16 || r.x >= 32 || r.s < 2) return 0;
-        R.original = r; R.running = 1; R.remaining = S.reflected & 0xC000;
+        R.original = r; R.running = 1; R.remaining = S.reflected & (mm3_coop_world_slot(14) ? 0 : 0xC000);
         R.weapon = ram(0xA0); R.animation = ram(0x5C0); R.state = ram(0x30);
         R.boss = (ram(0x300+r.x) & 0x40) != 0 && (ram(0x4E0+r.x) & 31) != 0;
         memcpy(R.scratch,cyc_cpu_ram(),sizeof R.scratch);

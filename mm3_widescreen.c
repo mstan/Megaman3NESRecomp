@@ -453,7 +453,7 @@ static int object_draw(uint16_t addr)
     CycModRegs r;
     cyc_mod_regs(&r);
     int x = r.x;
-    if (mm3_coop_independent() && mm3_coop_scene_active() && x < 16) return 1;
+    if (mm3_coop_independent() && mm3_coop_scene_active() && x < 16 && !mm3_coop_world_slot((unsigned)x)) return 1;
     if (!s_win_valid || s_stage != ram(0x22)) return 0;
     if (x == 0 || x >= 0x20) return 0;                       /* Mega Man stays native */
     if (!(ram((uint16_t)(0x580 + x)) & 0x10) || ram((uint16_t)(0x3E0 + x))) return 0;

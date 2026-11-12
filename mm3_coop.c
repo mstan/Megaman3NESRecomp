@@ -71,6 +71,9 @@ typedef struct {
     uint8_t enabled,waiting,resume,flag[2],direction[2],page[2];
 } ExitWait;
 static ExitWait E;
+/* Refight deaths create one return pod and one remnant in retail slots14/15. */
+typedef struct { char magic[4];uint8_t enabled,low,reserved[2]; } Refights;
+static Refights F;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
 static int s_on, s_roster, s_view, s_wait_both, s_inside, s_projectiles;
@@ -81,6 +84,8 @@ static int s_poke_count;
 int mm3_coop_test_pokes(void) { return s_poke_count; }
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 2047]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
+int mm3_coop_world_slot(unsigned slot) { return s_on && F.low && ram(0x22) == 15 && slot >= 14 && slot < 16; }
+static int world_address(unsigned a) { return a >= 0x300 && a < 0x600 && mm3_coop_world_slot(a&31); }
 static void controls(Player *p);
 int mm3_coop_enabled(void) { return s_on; }
 int mm3_coop_scene_active(void) { return s_on && C.initialized; }
@@ -113,15 +118,23 @@ static void addresses(void)
     s_address[s_count++] = 0x5B;s_address[s_count++] = 0x5C;
     for (unsigned i = 0; i < s_count; i++) s_index[s_address[i]] = (uint16_t)(i + 1);
 }
-static void capture(Player *p) { for (unsigned i = 0; i < s_count; i++) p->ram[i] = ram(s_address[i]); }
-static void project(const Player *p) { for (unsigned i = 0; i < s_count; i++) poke(s_address[i], p->ram[i]); }
-static int combat_field(unsigned a) { return a != 0xEB && !(a >= 0x610 && a <= 0x633); }
+static void reserve_refight_effects(void)
+{
+    if (F.low || !C.initialized || ram(0x22) != 15 || !(ram(0x30E)&0x80) || !(ram(0x30F)&0x80) ||
+        ram(0x32E) != 0xEB || ram(0x32F) != 0x64) return;
+    F.low = 1;
+    for (int seat = 0; seat < 2; seat++) for (int slot = 14; slot < 16; slot++)
+        C.players[seat].ram[s_index[0x300+slot]-1] = 0;
+}
+static void capture(Player *p) { for (unsigned i = 0; i < s_count; i++) if (!world_address(s_address[i])) p->ram[i] = ram(s_address[i]); }
+static void project(const Player *p) { for (unsigned i = 0; i < s_count; i++) if (!world_address(s_address[i])) poke(s_address[i], p->ram[i]); }
+static int combat_field(unsigned a) { return !world_address(a) && a != 0xEB && !(a >= 0x610 && a <= 0x633); }
 static void capture_combat(Player *p) { for (unsigned i = 0; i < s_count; i++) if (combat_field(s_address[i])) p->ram[i] = ram(s_address[i]); }
 static void project_combat(const Player *p) { for (unsigned i = 0; i < s_count; i++) if (combat_field(s_address[i])) poke(s_address[i], p->ram[i]); }
 int mm3_coop_read(int seat, unsigned a)
 {
     if (a >= 2048 || seat < 0 || seat > 1) return 0;
-    return s_on && C.initialized && s_index[a] ? C.players[seat].ram[s_index[a] - 1] : ram(a);
+    return s_on && C.initialized && s_index[a] && !world_address(a) ? C.players[seat].ram[s_index[a] - 1] : ram(a);
 }
 static int available(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
 static int alive(int seat) { return !(E.waiting & (1u<<seat)) && available(seat); }
@@ -200,7 +213,7 @@ static void paired_script(unsigned active)
     capture(&C.players[C.anchor]);
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
-        for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+        for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot)) poke(0x300+slot,0);
         poke(0x5B,0);poke(0x5C,0);poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
     }
     C.current = C.anchor; project(&C.players[C.anchor]); T.active = (uint8_t)active; T.priming = 0;
@@ -276,7 +289,7 @@ static void wait_hide(int seat,int direction,int camera)
     int previous = C.current;
     C.current = (uint8_t)seat;project(&C.players[seat]);mm3_charge_cancel();
     E.flag[seat] = ram(0x300);E.direction[seat] = (uint8_t)direction;E.page[seat] = (uint8_t)(camera>>8);
-    for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+    for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot)) poke(0x300+slot,0);
     poke(0x5B,0);poke(0x5C,0);poke(0x300,0);poke(0x32,0);poke(0xB5,0);capture(&C.players[seat]);
     E.waiting |= (uint8_t)(1u<<seat);
     C.current = (uint8_t)previous;project(&C.players[previous]);
@@ -334,7 +347,7 @@ static int transition_begin(uint16_t address)
     capture(&C.players[C.anchor]);
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
-        for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+        for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot)) poke(0x300+slot,0);
         poke(0x5B,0);poke(0x5C,0);poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
     }
     C.current = C.anchor; project(&C.players[C.anchor]);
@@ -466,7 +479,7 @@ static int native_call(uint16_t routine, CycModRegs *r, int pool)
         for(unsigned i=0;terrain && i<sizeof bits;i++)if(ram(0x110+i)!=bits[i])poke(0x110+i,bits[i]);
         for(unsigned i=0;i<sizeof queue;i++)if(ram(0x780+i)!=queue[i])poke(0x780+i,queue[i]);
         if(ram(0x19)!=dirty)poke(0x19,dirty);
-        for (unsigned i = 0; i < s_count; i++) poke(s_address[i], result[i]);
+        for (unsigned i = 0; i < s_count; i++) if (!world_address(s_address[i])) poke(s_address[i], result[i]);
         for (unsigned i = 0; i < 8; i++) if (ram(0xDC + i) == 0x88 && sounds[i] != 0x88) poke(0xDC + i, sounds[i]);
         poke(0xDA, next);
     }
@@ -478,8 +491,9 @@ static int pool_boundary(uint16_t address)
     CycModRegs r = {0}; cyc_mod_regs(&r);
     /* At this top-level loop edge every personal AI invocation has returned.
      * Its original JSR is the next stack frame, so RTS ends only this pool. */
-    if (s_projectiles) return r.x >= 16;
-    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || r.x < 16 || r.x >= 32) return 0;
+    if (s_projectiles) return r.x >= (F.low && ram(0x22) == 15 ? 14 : 16);
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() ||
+        (r.x < 16 && !mm3_coop_world_slot(r.x)) || r.x >= 32) return 0;
     int freezer = -1;
     for (int seat = 0; seat < 2; seat++) if (simulation_read(seat,0x5B) == r.x || simulation_read(seat,0x5C) == r.x) {
         freezer = seat;break;
@@ -531,7 +545,7 @@ int mm3_coop_dispatch(void)
         (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && available(C.anchor^1))) ||
         (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
-    if (T.active == 3 && !ram(0x30)) { follow_partner();T.active = 0; }
+    if (T.active == 3 && !ram(0x30)) { follow_partner();F.low = 0;T.active = 0; }
     if (T.active == 2 && ram(0x30) == 0 && ram(0x22) >= 8 && ram(0x22) < 12 && ram(0xF9) < 0x18) {
         /* The first Doc Robot victory returns to native ground control in
          * the same stage. Publish its final paired pose once, then release
@@ -593,7 +607,8 @@ static void collision(int kind, unsigned entry)
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (C.scope) {
         if (C.scope != kind || r.s != C.original.s) return;
-        int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31);
+        int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB0) & 31);
+        if (kind == 2) reserve_refight_effects();
         capture_combat(&C.players[C.current]); C.contacts[C.current]++;
         int guest = C.current;
         C.current = C.scope_owner;
@@ -618,9 +633,6 @@ static void collision(int kind, unsigned entry)
         cyc_mod_set_regs(&C.original); C.scope = 0; return;
     }
     if (r.x < 16 || r.x >= 32 || !alive(C.current ^ 1)) return;
-    /* Refights create their unique victory/orb actors in personal slots. They
-     * need explicit one-owner transfer before this shared call can admit them. */
-    if (kind == 2 && ram(0x320 + r.x) >= 0xA0 && ram(0x22) == 0x0F) return;
     /* Nearest-player AI borrows personal combat RAM without taking native
      * presentation ownership. Its collision must preserve that distinction. */
     if (C.ai && C.current != C.anchor) capture_combat(&C.players[C.current]);
@@ -711,7 +723,7 @@ static void transport(int seat, int arrival, int x, int y, int heal)
         poke(0x5B,freeze[0]); poke(0x5C,freeze[1]); poke(0xA2,0x9C);
         poke(0x3C,0); poke(0x3F,0);
     }
-    for (int slot = 1; slot < 16; slot++) poke(0x300 + slot,0);
+    for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot)) poke(0x300 + slot,0);
     poke(0x5B,0);poke(0x5C,0);
     poke(0x32,0); poke(0x33,0); poke(0x36,0); poke(0x37,0); poke(0x38,0);
     poke(0x3D,0); poke(0xB5,0); poke(0x39,2); poke(0x500,0);
@@ -768,7 +780,7 @@ void mm3_coop_frame_end(void)
     if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
     if (E.waiting && !available(E.waiting&1 ? 1 : 0)) wait_finish(1);
-    if (ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31)) victory_follow();
+    if (ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB0) & 31)) victory_follow();
     select_tick();
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
         change_anchor(C.anchor^1);
@@ -801,6 +813,7 @@ void mm3_coop_before_draw(void)
 static void after_return(void)
 {
     if (!s_on || cyc_mod_isolated()) return;
+    if (C.initialized && !s_inside && !C.scope && !C.ai) reserve_refight_effects();
     if (C.initialized && !s_inside && !C.scope && !C.ai && !T.active && ram(0x22) == 15 && ram(0x30) == 0x11)
         paired_script(3);
     CycModRegs r = {0}; cyc_mod_regs(&r);
@@ -837,7 +850,7 @@ static void draw_player(int guest)
         poke(0xFC, shifted); poke(0xF9, shifted >> 8); poke(0x97, 4);
         for (int i = 0; i < 256; i += 4) poke(0x200 + i, 0xF8);
         if (ok) ok = cyc_mod_call(0xFF45, &r); /* apply this player's native CHR bank */
-        for (int slot = 0; ok && slot < 16; slot++) if (ram(0x300 + slot) & 0x80) {
+        for (int slot = 0; ok && slot < 16; slot++) if (!mm3_coop_world_slot(slot) && (ram(0x300 + slot) & 0x80)) {
             r.x = (uint8_t)slot; poke(0x96, slot); ok = cyc_mod_call(0xF06B, &r);
         }
         if (ok) {
@@ -857,7 +870,7 @@ static void draw_player(int guest)
         isolated_hooks(0); cyc_mod_isolate_end();
     }
     if (ok) {
-        memcpy(C.players[guest].ram, personal, s_count);
+        for (unsigned i = 0; i < s_count; i++) if (!world_address(s_address[i])) C.players[guest].ram[i] = personal[i];
         unsigned producer = ram(0xDA) & 7;
         for (int i = 0; i < 8 && sounds[producer] != 0x88 && ram(0xDC + producer) == 0x88; i++) {
             if (sounds[producer] != 0xF2 || !alive(C.anchor)) sound(sounds[producer]);
@@ -1001,6 +1014,7 @@ static int stage_entry(uint16_t address)
     if (s_on && !cyc_mod_isolated()) {
         mm3_ws_coop_reset();
         memset(&E,0,sizeof E);
+        memset(&F,0,sizeof F);
         C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; T.active = T.priming = 0; mm3_coop_menu_cancel();
     }
     return 0;
@@ -1044,6 +1058,7 @@ void mm3_coop_power_on(void)
 {
     memset(&C, 0, sizeof C); memset(&L, 0, sizeof L); memset(&P,0,sizeof P); memset(&T,0,sizeof T);
     memset(&E,0,sizeof E);
+    memset(&F,0,sizeof F);
     s_checkpoint_tables = 0;
     addresses(); mm3_coop_menu_power_on();
     if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
@@ -1155,6 +1170,19 @@ static int transition_valid(const uint8_t *in, int size)
 }
 static int transition_set(const uint8_t *in, int size)
 { if (!transition_valid(in,size)) return 0; if (size) memcpy(&T,in,size); else memset(&T,0,sizeof T); return 1; }
+static int refights_get(uint8_t *out,int cap)
+{
+    if (cap < (int)sizeof F) return -1;
+    memcpy(F.magic,"RF01",4);F.enabled = (uint8_t)s_on;memcpy(out,&F,sizeof F);return sizeof F;
+}
+static int refights_valid(const uint8_t *in,int size)
+{
+    if (!size) return 1;
+    Refights n;if (!in || size != (int)sizeof n) return 0;memcpy(&n,in,size);
+    return !memcmp(n.magic,"RF01",4) && n.enabled == s_on && n.low <= 1 && !n.reserved[0] && !n.reserved[1];
+}
+static int refights_set(const uint8_t *in,int size)
+{ if (!refights_valid(in,size)) return 0;if (size) memcpy(&F,in,size);else memset(&F,0,sizeof F);return 1; }
 static int wait_get(uint8_t *out,int cap)
 { if (cap < (int)sizeof E) return -1;memcpy(E.magic,"EW01",4);E.enabled = (uint8_t)s_wait_both;memcpy(out,&E,sizeof E);return sizeof E; }
 static int wait_valid(const uint8_t *in,int size)
@@ -1226,6 +1254,8 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_savestate_validator("mm3.coop-priority",priority_valid);
     nes_mod_register_savestate_hook("mm3.coop-transition",transition_get,transition_set);
     nes_mod_register_savestate_validator("mm3.coop-transition",transition_valid);
+    nes_mod_register_savestate_hook("mm3.coop-refights",refights_get,refights_set);
+    nes_mod_register_savestate_validator("mm3.coop-refights",refights_valid);
     nes_mod_register_savestate_hook("mm3.coop-exit-wait",wait_get,wait_set);
     nes_mod_register_savestate_validator("mm3.coop-exit-wait",wait_valid);
 }
