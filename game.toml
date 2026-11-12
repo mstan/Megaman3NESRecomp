@@ -705,6 +705,12 @@ end = 0xDF3A
 # $9C11 (bank $1A, inside check_new_enemies); $F06B is the per-object draw
 # that deletes a world object outside the 256 px screen.
 [[mod_function_hook]]
+id = "mm3.world.queue"
+addr = 0xEE57
+bytes = "38 A5 1A 05 19 D0 4C A9"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.view.hud-part"
 addr = 0xF2FF
 bytes = "E8 E8 E8 E8 F0 0B A5 03"

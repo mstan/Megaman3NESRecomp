@@ -5,6 +5,7 @@
 #include "mm3_charge.h"
 #include "mm3_widescreen.h"
 #include "mm3_coop_menu.h"
+#include "mm3_world.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
@@ -267,6 +268,7 @@ static int isolated_hooks(int enabled)
             Hook *h = &s_hooks[i]; nes_mod_function_hook_at(i, &h->id, NULL, &h->enabled, NULL);
             int personal = !strcmp(h->id, "mm3.proto.muzzle") || !strcmp(h->id, "mm3.proto.shots") ||
                 !strcmp(h->id, "mm3.coop.pool-end") || !strcmp(h->id, "mm3.coop.death-music") ||
+                !strncmp(h->id,"mm3.world.",10) ||
                 (s_inside == 2 && (!strcmp(h->id, "mm3.proto.pose") || !strcmp(h->id, "mm3.proto.part") || !strcmp(h->id, "mm3.proto.pose-done")));
             if (h->enabled && !personal) nes_mod_set_function_hook_enabled(h->id, 0);
         }
@@ -280,19 +282,37 @@ static int isolated_hooks(int enabled)
 static int native_call(uint16_t routine, CycModRegs *r, int pool)
 {
     uint8_t result[PERSONAL], sounds[8], next = 0;
+    int terrain = ram(0x22)==2 || ram(0x22)==9;
     if (!cyc_mod_isolate_begin()) return 0;
+    mm3_world_private_begin();
+    uint8_t world[24][16],bits[64],queue[128],dirty=0;
     int ok = isolated_hooks(1);
     if (ok && pool) {
+        int left[2];
+        if (mm3_coop_independent() && mm3_coop_view_rects(left)) {
+            poke(0xFC,left[C.current]);poke(0xF9,left[C.current]>>8);
+        }
         poke(0xF4, 0x1C); poke(0xF5, 0x1D);
         ok = cyc_mod_call(0xFF6B, r);
     }
     if (ok) { s_projectiles = pool; ok = cyc_mod_call(routine, r); s_projectiles = 0; }
     if (ok) {
+        for(int f=0;f<24;f++)for(int slot=16;slot<32;slot++)world[f][slot-16]=ram(0x300+f*32+slot);
+        if (terrain) memcpy(bits,cyc_cpu_ram()+0x110,sizeof bits);
+        memcpy(queue,cyc_cpu_ram()+0x780,sizeof queue);dirty=ram(0x19);
         for (unsigned i = 0; i < s_count; i++) result[i] = ram(s_address[i]);
         next = ram(0xDA); memcpy(sounds, cyc_cpu_ram() + 0xDC, sizeof sounds);
     }
     isolated_hooks(0); cyc_mod_isolate_end();
+    mm3_world_private_end(ok);
     if (ok) {
+        for(int f=0;f<24;f++)for(int slot=16;slot<32;slot++) {
+            unsigned a=0x300+f*32+slot;if(ram(a)!=world[f][slot-16])poke(a,world[f][slot-16]);
+        }
+        /* Only Gemini assigns this low stack-page region to terrain. */
+        for(unsigned i=0;terrain && i<sizeof bits;i++)if(ram(0x110+i)!=bits[i])poke(0x110+i,bits[i]);
+        for(unsigned i=0;i<sizeof queue;i++)if(ram(0x780+i)!=queue[i])poke(0x780+i,queue[i]);
+        if(ram(0x19)!=dirty)poke(0x19,dirty);
         for (unsigned i = 0; i < s_count; i++) poke(s_address[i], result[i]);
         for (unsigned i = 0; i < 8; i++) if (ram(0xDC + i) == 0x88 && sounds[i] != 0x88) poke(0xDC + i, sounds[i]);
         poke(0xDA, next);

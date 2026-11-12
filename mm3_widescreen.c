@@ -29,6 +29,7 @@
 #include "mm3_charge.h"
 #include "mm3_coop.h"
 #include "mm3_coop_menu.h"
+#include "mm3_world.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -156,6 +157,7 @@ static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
     uint8_t m16 = m[0x1700 + m32 * 4 + ((r >> 1) & 1) * 2 + ((c >> 1) & 1)];
     *tile = m[(r & 1 ? 0x1D00 : 0x1B00) + (c & 1) * 0x100 + m16];
     *palette = m[0x1F00 + m16] & 3;
+    if ((m[0x1F00+m16]&0xF0)==0x70 && mm3_world_destroyed(screen,c/2,r/2)) *tile=0;
 }
 
 /* ---- objects beyond the native view ----
@@ -896,6 +898,7 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
 
 void mm3_ws_refresh_policy(void)
 {
+    mm3_world_refresh();
     int characters = mm3_proto_available() || mm3_charge_available();
     enable_hooks(s_mode != NES_VIDEO_STOCK || characters);
     cyc_render_set_stock_compositing(characters);

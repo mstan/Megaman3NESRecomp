@@ -8,6 +8,7 @@
 #include "mm3_mods.h"
 #include "mm3_charge.h"
 #include "mm3_coop.h"
+#include "mm3_world.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -30,6 +31,7 @@ static void power_on(void *ctx)
     mm3_ws_power_on();
     mm3_coop_power_on();
     mm3_mods_power_on();
+    mm3_world_power_on();
 }
 
 static void load_setting(void *ctx, const char *key, const char *value)

@@ -1,0 +1,41 @@
+# Boot Gemini Man normally (both co-op profiles use the supplied USA ROM).
+# No native progress or destruction flags are assigned by this route.
+0 -
+6000 START
+6010 -
+6200 DOWN
+6210 -
+6240 LEFT
+6250 -
+6400 START
+6410 -
+# At7799 save a current-build initialized state. Boundary setup at7800:
+# native room1/page9, camera9:00, scrollflags20/count0/progress0; both players
+# x9:80/y232, yscreen0, air state1/falling, HP28 and protection. This bypasses
+# traversal/entrance prerequisites. The real native downward scroll must reach
+# room2/page10 and load its graphics; do not directly select the destination.
+# From the resulting7999 state, position the shooter at11:D8/y68, ground,
+# facing right, Buster. Native blocks begin at11:F0/y64. In the local control
+# both players share this position; camera11:58/progress1 is a setup bypass.
+# Repeat with P1 at10:80/y180 and camera10:00: P2 is genuinely offscreen.
+8000 1:-
+8000 2:-
+8002 2:B
+8003 2:-
+# Native result: bitmap0110+43 becomes04 and native child routine27 appears.
+# Preserve all other bitmap bytes. The frozen branch leaves both absent for P2.
+# Warm/native/interpreter and current-build cold8006 continuation/PCM must agree.
+# Compare the complete raw native picture with a quiet distant control: a remote
+# clear must never erase an unrelated column in the primary's live nametable.
+8042 2:B
+8043 2:-
+8060 2:B
+8061 2:-
+# The second shot hits the actual child. The third travels beyond world3072
+# through the same opening, without restoring the block or emitting another child.
+# With all16 world slots occupied, native destruction must instead retain them
+# and turn the shot into its native in-place effect, with no extra world actor.
+# Native pixel oracle: increment test-owned P1 positions in8px steps from2688
+# to3032, letting the original camera/column streamer refill the destination.
+# Hold its Y68/air preconditions during this positioning bypass, settle ground,
+# then fire at8050. Compare native PPU terrain/HUD/world outside personal bodies.

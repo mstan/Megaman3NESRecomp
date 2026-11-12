@@ -232,5 +232,7 @@ views produce the same simulation. Each panel keeps its own native HUD and
 camera; a dead player's panel follows the survivor. Personal sprites use their
 own native camera during capture, including a distant survivor handoff. Menus
 retain the native bottom-panel position over a background-only scene.
-Mutable terrain, additional room/script behavior and online play remain under
-development.
+Gemini Man's block destruction updates the common terrain and creates its native
+child objects for either player's shots. Remote destruction preserves the live
+native background, and later shots can pass through the opened space.
+Additional room/helper/script behavior and online play remain under development.
