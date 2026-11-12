@@ -57,7 +57,7 @@ static bool s_seg_horizontal[MAX_SEGMENTS];
 
 /* Last picture. */
 static uint8_t s_opaque[CYC_VIDEO_MAX_WIDTH * 240];   /* background coverage of the canvas */
-static bool s_win_valid;          /* the last picture was composed: its window drives the object hooks */
+static bool s_win_valid;          /* native simulation geometry, independent of picture presentation */
 static int s_view_left, s_cam, s_play_x0, s_screens[2], s_match, s_samples;
 static unsigned long s_composed, s_fallback;
 static const char *s_reason = "not composed";
@@ -182,7 +182,7 @@ static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
 typedef struct { int16_t x; uint8_t y, tile, attr, after, after_body, reserved; } WideSprite;
 static WideSprite s_wide[2][MAX_WIDE_SPRITES];
 static int s_wide_n[2], s_wide_cur, s_wide_shown = 1;
-static int s_win_left, s_win_right;   /* world X the last picture showed (clipped to segments) */
+static int s_win_left, s_win_right;   /* logical simulation view, clipped to native room segments */
 static unsigned long s_kept, s_spawn_widened;
 static int s_restored;
 typedef struct {
@@ -261,9 +261,25 @@ static int nmi_latch(uint16_t addr)
     return 0;
 }
 
+static void simulation_window(void)
+{
+    s_win_valid = false;
+    int width = cyc_video_width();
+    if (s_mode == NES_VIDEO_STOCK || width <= 256 || width > CYC_VIDEO_MAX_WIDTH || ram(0x22) >= STAGE_COUNT) return;
+    ensure_stage();
+    if (s_stage != ram(0x22)) return;
+    int camera = ram(0xF9)*256 + ram(0xFC), left, right;
+    view_range(camera,&left,&right);
+    int view = camera - (width-256)/2;
+    s_win_left = left > view ? left : view;
+    s_win_right = right < view+width ? right : view+width;
+    s_win_valid = s_win_left < s_win_right;
+}
+
 static int spawn_edges(uint16_t addr)
 {
     (void)addr;
+    simulation_window();
     if (!s_win_valid) return 0;
     int left = cyc_mod_peek(0x00) | cyc_mod_peek(0x01) << 8;
     int right = cyc_mod_peek(0x02) | cyc_mod_peek(0x03) << 8;
@@ -427,7 +443,6 @@ static int score(const Lines *l, int cam, const int screens[2], int *samples)
 static int fallback(const char *why)
 {
     s_reason = why;
-    s_win_valid = false;          /* objects follow the game's own 256 px rules again */
     s_fallback++;
     return 0;
 }
@@ -508,9 +523,6 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
         }
     }
     if (!mm3_coop_enabled()) draw_wide_sprites(out, width, play_x0, s_opaque);
-    s_win_left = left > view ? left : view;
-    s_win_right = right < view + width ? right : view + width;
-    s_win_valid = true;
     if (s_check && cyc_render_background(s_bg)) {
         /* The decoder's own picture of the native area against the PPU's
          * background-only capture: palettes, CHR banks and fine scroll. */

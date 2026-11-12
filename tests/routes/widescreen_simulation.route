@@ -1,0 +1,12 @@
+# Current-build Snake Man co-op prerequisite: native gameplay at frame7799.
+# Launch --coop on --widescreen 16:9 --extra-scanlines 0 --charge off.
+# Use the existing per-seat fixture to place P1 world128/y180, P2 world406/y84.
+# Retain the authored Petit Snakey in slot30; move it into the actual margin.
+# Compare present-every1 with no periodic presentation through frame7839.
+# Native actor30 must survive in the logical view; simulation RAM/full state,
+# physical OAM, native/presented pixels and PCM must be identical. Repeat in
+# interpreter mode and cold from frame7803. Presentation never drives spawning.
+7800 1:-
+7800 2:-
+7801 POKE 37E 96
+7801 POKE 39E 01
