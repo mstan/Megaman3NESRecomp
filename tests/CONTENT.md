@@ -64,3 +64,16 @@ original exit, and advance to Wily 4. Test the actual real body rather than
 the two decoys. A visible damage window and one HP are allowed prerequisites.
 Compare both attacker roles with the interpreter and a cold snapshot saved
 during the native victory sequence, including exact PCM continuation.
+
+Break Man's real defeat must let his departure start the receiving player's
+native beam script on the real clock. A guest beam must advance the shared
+scene rather than discard its stage-clear write in a private controller call.
+Check the actual next scene, interpreter equality and a cold continuation.
+
+Summon Rush Jet through the native weapon input, board it, and rise above the
+ordinary floor. Position the partner to land on that Jet, then move the owner.
+The partner must stay on the moving Jet with their own weapon and ammunition.
+Its fuel cost must equal the original owner's run without a passenger. Check
+both ownership roles, native/interpreter equality and current-build cold
+state/picture/PCM continuation. The temporary collision platform must be
+restored before personal AI or rendering; only the original Jet advances.

@@ -99,7 +99,7 @@ int mm3_mods_equip(int next, int announce)
 {
     if (next < 0 || next >= 12 || (next && !(ram(0xA2 + next) & 0x80)) || !equipment_tables()) return 0;
     /* Personal weapons, including Rush and dust; refight effects stay shared. */
-    for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot)) poke(0x300 + slot, 0);
+    for (int slot = 1; slot < 16; slot++) if (!mm3_coop_world_slot(slot) && !mm3_coop_helper_slot(slot)) poke(0x300 + slot, 0);
     poke(0x5B, 0); poke(0x5C, 0); /* Release the departing Spark Shock effect. */
     poke(0xA0, next);
     poke(0xA1, next % 6); poke(0xB4, next >= 6 ? 6 : 0);

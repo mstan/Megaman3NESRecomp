@@ -260,8 +260,6 @@ door or hides them at a valid vertical exit until the partner reaches the same
 exit. The remaining player keeps control. Different exits do not release a
 waiting player; if the active partner dies, the waiting survivor resumes their
 own native transition without spending a shared life. This rule defaults off.
-This remains a development slice: additional boss/script and transition
-coverage and online qualification are pending.
 The development `--coop-view shared|split|p1|p2` option selects the view. Separate
 views use two fixed 256-pixel
 simulation rectangles. Native enemy construction, nearest-player targeting,
@@ -279,4 +277,12 @@ publishes with a complete native OAM draw in NMI to preserve the prior picture.
 Gemini Man's block destruction updates the common terrain and creates its native
 child objects for either player's shots. Remote destruction preserves the live
 native background, and later shots can pass through the opened space.
-Additional room/helper/script behavior and online play remain under development.
+Either player can ride the other player's Rush Jet. The original owner controls
+the Jet and pays its native fuel cost; the passenger retains their own weapon
+and ammunition. Its movement and landing use the cartridge's platform collision.
+Break Man's departure promotes the player who receives his native teleport
+script, so a guest-triggered exit advances the shared stage on the real clock.
+High-level native checks cover main areas, available checkpoints and real boss
+clears in all 18 stages, including both Machine and Gamma phases and the ending.
+These checks use positional and damage prerequisites; they do not cover normal
+stage traversal or every boss movement pattern.
