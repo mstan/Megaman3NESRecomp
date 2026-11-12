@@ -198,6 +198,7 @@ static int menu(uint16_t address)
     } else {
         M.ticks++;
         for (int seat = 0; seat < 2; seat++) {
+            if (!mm3_coop_independent() && seat != M.owner) { M.previous[seat] = M.held[seat]; continue; }
             uint8_t fresh = M.held[seat] & ~M.previous[seat];
             if (M.rush[seat]) M.rush[seat]--;
             else if (M.heal[seat]) {
@@ -256,9 +257,12 @@ void mm3_coop_menu_input(uint8_t buttons[2])
 int mm3_coop_menu_draw(uint32_t *out, int width)
 {
     if (!mm3_coop_menu_active()) return 0;
-    int left = (width - PANEL_W) / 2;
-    for (int seat = 0; seat < 2; seat++) if (M.ready[seat]) {
-        int top = 112 + seat * PANEL_H;
+    int mode = mm3_coop_independent() ? mm3_coop_view_mode() : 0;
+    for (int panel = 0; panel < (mode==1 ? 2 : 1); panel++) {
+        int seat = !mode ? M.owner : mode==1 ? panel : mode==3;
+        if (!M.ready[seat]) continue;
+        int left = mode==1 ? panel*PANEL_W : (width-PANEL_W)/2;
+        int top = 176;
         for (int y = 0; y < PANEL_H; y++) for (int x = 0; x < PANEL_W; x++) {
             int dx = left + x; if (dx < 0 || dx >= width) continue;
             int index = M.image[seat][y * PANEL_W + x];

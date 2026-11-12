@@ -5,6 +5,7 @@ int mm3_coop_enabled(void);
 int mm3_coop_scene_active(void);
 int mm3_coop_independent(void);
 int mm3_coop_view_mode(void);
+int mm3_coop_view_locked(void);
 void mm3_coop_view_policy(void);
 /* Simulation hooks publish these rectangles; presentation must latch them. */
 int mm3_coop_view_rects(int left[2]);

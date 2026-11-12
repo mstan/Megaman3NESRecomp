@@ -196,6 +196,21 @@ typedef struct {
     uint8_t seen[256];
 } ViewRects;
 static ViewRects s_rects;
+typedef struct {
+    uint8_t x,y,tile,attr,pattern[16],palette[4];
+} PanelHud;
+typedef struct {
+    uint8_t active,native_scene,stage,hud_count[2],reserved[3];
+    int16_t left[2],camera;
+    uint8_t tiles[2][30][33],palettes[2][30][33];
+    uint64_t hud_mask;
+    uint8_t oam[256];
+    PanelHud hud[2][21];
+} PanelFrame;
+static PanelFrame s_panel_build,s_panel_frame;
+static uint32_t s_panel_picture[2][256*240];
+static uint8_t s_panel_opaque[256*240];
+static void panels_build(void);
 static unsigned long s_kept, s_spawn_widened;
 static int s_restored;
 typedef struct {
@@ -258,6 +273,7 @@ static int begin_pass(uint16_t addr)
     mm3_coop_picture_begin();
     mm3_proto_draw_begin();
     mm3_coop_draw();
+    panels_build();
     return 0;
 }
 
@@ -268,6 +284,8 @@ static int nmi_latch(uint16_t addr)
     (void)addr;
     if (ram(0xEE) | ram(0x9A)) return 0;
     s_wide_shown = s_wide_cur;
+    s_panel_frame = s_panel_build;
+    memcpy(s_panel_frame.oam,cyc_cpu_ram()+0x200,sizeof s_panel_frame.oam);
     /* This hook precedes the actual DMA: choose its captured owner directly.
      * The physical-OAM fingerprint is only valid after the native copy. */
     int owner = mm3_coop_latch();
@@ -370,10 +388,11 @@ static int object_draw(uint16_t addr)
 {
     (void)addr;
     mm3_coop_primary_begin();
-    if (!s_win_valid || s_stage != ram(0x22)) return 0;
     CycModRegs r;
     cyc_mod_regs(&r);
     int x = r.x;
+    if (mm3_coop_independent() && mm3_coop_scene_active() && x < 16) return 1;
+    if (!s_win_valid || s_stage != ram(0x22)) return 0;
     if (x == 0 || x >= 0x20) return 0;                       /* Mega Man stays native */
     if (!(ram((uint16_t)(0x580 + x)) & 0x10) || ram((uint16_t)(0x3E0 + x))) return 0;
     int ox = ram((uint16_t)(0x380 + x)) << 8 | ram((uint16_t)(0x360 + x));
@@ -470,6 +489,82 @@ static int rects_set(const uint8_t *in, int size)
 void mm3_ws_coop_reset(void)
 { s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; }
 
+static int hud_part(uint16_t address)
+{
+    (void)address;
+    if (mm3_coop_independent() && !cyc_mod_isolated()) {
+        CycModRegs r = {0}; cyc_mod_regs(&r);
+        s_panel_build.hud_mask |= 1ull << (r.x/4);
+    }
+    return 0;
+}
+static void panel_hud(int seat)
+{
+    if (!cyc_mod_isolate_begin()) return;
+    for (int a = 0xA0; a <= 0xAD; a++) cyc_mod_poke((uint16_t)a,(uint8_t)mm3_coop_read(seat,a));
+    cyc_mod_poke(0xB1,(uint8_t)mm3_coop_read(seat,0xB1));
+    cyc_mod_poke(0xEB,(uint8_t)mm3_coop_read(seat,0xEB));
+    cyc_mod_poke(0x97,4); cyc_mod_poke(0xF7,0);
+    CycModRegs r = {0}; cyc_mod_regs(&r);
+    int ok = cyc_mod_call(0xFF45,&r) && cyc_mod_call(0xF298,&r);
+    if (ok) {
+        int end = ram(0x97); if (!end) end = 256;
+        for (int at = 4; at < end && s_panel_build.hud_count[seat] < 21; at += 4) {
+            PanelHud *p = &s_panel_build.hud[seat][s_panel_build.hud_count[seat]++];
+            p->x = ram(0x203+at); p->y = ram(0x200+at); p->tile = ram(0x201+at); p->attr = ram(0x202+at);
+            unsigned pattern = (ram(0xFF)&8 ? 0x1000 : 0)+p->tile*16;
+            for (int b = 0; b < 16; b++) p->pattern[b] = cyc_render_chr((uint16_t)(pattern+b));
+            for (int c = 0; c < 4; c++) p->palette[c] = (uint8_t)(c ?
+                mm3_coop_read(seat,0x630+(p->attr&3)*4+c)&63 : ram(0x630+(p->attr&3)*4));
+        }
+    }
+    cyc_mod_isolate_end();
+}
+static void panels_build(void)
+{
+    memset(&s_panel_build,0,sizeof s_panel_build);
+    if (!mm3_coop_independent() || !mm3_coop_scene_active() || s_stage != ram(0x22)) return;
+    int left[2]; if (!mm3_coop_view_rects(left)) return;
+    s_panel_build.active = 1; s_panel_build.native_scene = (uint8_t)mm3_coop_view_locked();
+    s_panel_build.stage = ram(0x22); s_panel_build.camera = (int16_t)(ram(0xF9)*256+ram(0xFC));
+    for (int seat = 0; seat < 2; seat++) {
+        s_panel_build.left[seat] = (int16_t)left[seat];
+        for (int y = 0; y < 30; y++) for (int x = 0; x < 33; x++)
+            level_tile(((left[seat]&~7)+x*8)/8,y,&s_panel_build.tiles[seat][y][x],&s_panel_build.palettes[seat][y][x]);
+        panel_hud(seat);
+    }
+}
+typedef struct { char magic[4]; PanelFrame build,shown; } PanelState;
+static int panels_get(uint8_t *out,int cap)
+{
+    if (cap < (int)sizeof(PanelState)) return -1;
+    PanelState n = {0}; memcpy(n.magic,"VP01",4); n.build = s_panel_build; n.shown = s_panel_frame;
+    memcpy(out,&n,sizeof n); return sizeof n;
+}
+static int panels_valid(const uint8_t *in,int size)
+{
+    if (!size) return 1;
+    PanelState n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    if (memcmp(n.magic,"VP01",4)) return 0;
+    const PanelFrame *f[] = {&n.build,&n.shown};
+    for (int k = 0; k < 2; k++) {
+        if (f[k]->active > 1 || f[k]->native_scene > 1 || (f[k]->active && f[k]->stage >= STAGE_COUNT)) return 0;
+        for (int seat = 0; seat < 2; seat++) {
+            if (f[k]->hud_count[seat] > 21 || (f[k]->active && f[k]->left[seat] < 0)) return 0;
+            for (int y = 0; y < 30; y++) for (int x = 0; x < 33; x++) if (f[k]->palettes[seat][y][x] > 3) return 0;
+            for (int h = 0; h < f[k]->hud_count[seat]; h++) for (int c = 0; c < 4; c++) if (f[k]->hud[seat][h].palette[c] > 63) return 0;
+        }
+    }
+    return 1;
+}
+static int panels_set(const uint8_t *in,int size)
+{
+    if (!panels_valid(in,size)) return 0;
+    if (size) { PanelState n; memcpy(&n,in,size); s_panel_build = n.build; s_panel_frame = n.shown; }
+    else { memset(&s_panel_build,0,sizeof s_panel_build); memset(&s_panel_frame,0,sizeof s_panel_frame); }
+    return 1;
+}
+
 #if defined(_MSC_VER)
 #pragma section(".CRT$XCU", read)
 static void __cdecl register_hooks(void);
@@ -486,12 +581,15 @@ static void register_hooks(void)
         !nes_mod_register_function_entry_plugin(HOOK_DRAW, 0xF06B, object_draw) ||
         !nes_mod_register_function_entry_plugin(HOOK_NMI, 0xC000, nmi_latch) ||
         !nes_mod_register_function_entry_plugin(HOOK_PASS, 0xF034, begin_pass) ||
+        !nes_mod_register_function_entry_plugin("mm3.view.hud-part",0xF2FF,hud_part) ||
         !nes_mod_register_function_entry_plugin(HOOK_SPAWN_FILTER, 0x9C80, spawn_filter))
         fprintf(stderr, "[mm3 widescreen] cannot register hooks\n");
     nes_mod_register_savestate_hook("mm3.widescreen",wide_get,wide_set);
     nes_mod_register_savestate_validator("mm3.widescreen",wide_valid);
     nes_mod_register_savestate_hook("mm3.view-rects",rects_get,rects_set);
     nes_mod_register_savestate_validator("mm3.view-rects",rects_valid);
+    nes_mod_register_savestate_hook("mm3.view-panels",panels_get,panels_set);
+    nes_mod_register_savestate_validator("mm3.view-panels",panels_valid);
 }
 
 static void enable_hooks(bool on)
@@ -501,6 +599,7 @@ static void enable_hooks(bool on)
     nes_mod_set_function_hook_enabled(HOOK_NMI, on);
     nes_mod_set_function_hook_enabled(HOOK_PASS, on);
     nes_mod_set_function_hook_enabled(HOOK_SPAWN_FILTER, on && mm3_coop_independent());
+    nes_mod_set_function_hook_enabled("mm3.view.hud-part",on && mm3_coop_independent());
     if (!on) s_win_valid = false;
 }
 
@@ -664,7 +763,7 @@ static uint32_t s_character_picture[256 * 240];
 typedef struct {
     uint32_t *out;
     const uint8_t *opaque;
-    uint64_t body;
+    uint64_t body,skip;
     int width, origin, guest, wide;
 } SpritePaint;
 static void paint_events(SpritePaint *p, int slot)
@@ -684,26 +783,83 @@ static int sprite_place(int slot, int x, int y, int *out_x, void *user)
 {
     (void)y; SpritePaint *p = (SpritePaint *)user;
     paint_events(p,slot); *out_x = p->origin + x;
+    if (p->skip & (1ull << slot)) return 0;
+    if (mm3_coop_independent()) return 1; /* both personal packets are private */
     return mm3_proto_place_sprite(slot,p->body,p->out,p->width,p->origin,p->opaque);
 }
 static void combined_sprites(uint32_t *out, int width, int origin, const uint8_t *opaque, int wide)
 {
-    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
+    uint64_t skip = 0;
+    if (mm3_coop_independent() && s_panel_frame.active) {
+        const uint8_t *oam = cyc_render_oam();
+        for (int i = 0; i < 64; i++) if ((s_panel_frame.hud_mask&(1ull<<i)) &&
+            !memcmp(oam+i*4,s_panel_frame.oam+i*4,4)) skip |= 1ull<<i;
+    }
+    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),skip,width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
     cyc_render_sprites(out,width,240,origin,opaque,sprite_place,&p);
     paint_events(&p,-1);
 }
+static void panel_hud_paint(uint32_t *out,int seat)
+{
+    for (int i = s_panel_frame.hud_count[seat]-1; i >= 0; i--) {
+        const PanelHud *p = &s_panel_frame.hud[seat][i];
+        for (int y = 0; y < 8; y++) for (int x = 0; x < 8; x++) {
+            int py = p->y+1+y,px = p->x+x;
+            if (py >= 240 || px >= 256 || !(cyc_render_line_mask(py)&16)) continue;
+            int row = p->attr&128 ? 7-y : y,bit = p->attr&64 ? x : 7-x;
+            int v = ((p->pattern[row]>>bit)&1)|(((p->pattern[row+8]>>bit)&1)<<1);
+            if (v && (!(p->attr&32) || !s_panel_opaque[py*256+px]))
+                out[py*256+px] = cyc_render_color_value(p->palette[v]);
+        }
+    }
+}
+static void panel_scene(uint32_t *out,int seat)
+{
+    const uint8_t *native_opaque = cyc_frame_bg_opaque();
+    int phase = s_panel_frame.left[seat]&7;
+    for (int y = 0; y < 240; y++) for (int x = 0; x < 256; x++) {
+        int at = y*256+x;
+        if (s_panel_frame.native_scene) {
+            out[at] = s_character_picture[at]; s_panel_opaque[at] = native_opaque[at]; continue;
+        }
+        int row = cyc_render_line_scroll_y(y)%240,cell = (phase+x)/8;
+        int tile = s_panel_frame.tiles[seat][row/8][cell],a = cyc_render_line_bg_table(y)+tile*16+(row&7);
+        int bit = 7-((phase+x)&7),v = ((cyc_render_chr((uint16_t)a)>>bit)&1)|(((cyc_render_chr((uint16_t)(a+8))>>bit)&1)<<1);
+        if (!(cyc_render_line_mask(y)&8)) v = 0;
+        out[at] = cyc_render_color(v ? s_panel_frame.palettes[seat][row/8][cell]*4+v : 0);
+        s_panel_opaque[at] = (uint8_t)(v!=0);
+    }
+    if (!mm3_coop_menu_active()) {
+        int origin = s_panel_frame.native_scene ? 0 : s_panel_frame.camera-s_panel_frame.left[seat];
+        combined_sprites(out,256,origin,s_panel_opaque,1);
+        panel_hud_paint(out,seat);
+    }
+}
+static int panels(uint32_t *out,int width,int height)
+{
+    int mode = mm3_coop_view_mode();
+    if (!mm3_coop_independent() || !mm3_coop_scene_active() || !s_panel_frame.active || height != 240 ||
+        width != (mode==1 ? 512 : 256) || !cyc_render_background(s_character_picture)) return 0;
+    if (mode == 1) {
+        for (int seat = 0; seat < 2; seat++) panel_scene(s_panel_picture[seat],seat);
+        for (int y = 0; y < 240; y++) for (int seat = 0; seat < 2; seat++)
+            memcpy(out+y*width+seat*256,s_panel_picture[seat]+y*256,256*sizeof *out);
+    } else panel_scene(out,mode==3);
+    cyc_render_set_native_origin(0); return 1;
+}
 static int compose(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
 {
+    if (panels(out,width,height)) return 1;
     if (mm3_coop_enabled()) {
         if (!cyc_render_background(s_character_picture)) return 0;
         if (width == 256) {
             memcpy(out,s_character_picture,sizeof s_character_picture);
-            combined_sprites(out,width,0,cyc_frame_bg_opaque(),0); return 1;
+            if (!mm3_coop_menu_active()) combined_sprites(out,width,0,cyc_frame_bg_opaque(),0); return 1;
         }
         if (render_world(out,width,height,native_x0,s_character_picture,user)) {
-            combined_sprites(out,width,cyc_render_native_origin(width),s_opaque,1); return 1;
+            if (!mm3_coop_menu_active()) combined_sprites(out,width,cyc_render_native_origin(width),s_opaque,1); return 1;
         }
-        combined_sprites(s_character_picture,256,0,cyc_frame_bg_opaque(),0);
+        if (!mm3_coop_menu_active()) combined_sprites(s_character_picture,256,0,cyc_frame_bg_opaque(),0);
         int left = (width-256)/2;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) out[y*width+x] = 0xFF000000u;
@@ -753,6 +909,7 @@ void mm3_ws_power_on(void)
     s_wide_n[0] = s_wide_n[1] = 0;
     memset(s_wide,0,sizeof s_wide); s_wide_cur = 0; s_wide_shown = 1;
     memset(&s_rects,0,sizeof s_rects);
+    memset(&s_panel_build,0,sizeof s_panel_build); memset(&s_panel_frame,0,sizeof s_panel_frame);
     s_win_left = s_win_right = 0; s_restored = 0;
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);

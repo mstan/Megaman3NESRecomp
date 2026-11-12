@@ -77,6 +77,7 @@ int mm3_coop_enabled(void) { return s_on; }
 int mm3_coop_scene_active(void) { return s_on && C.initialized; }
 int mm3_coop_independent(void) { return s_on && s_view != 0; }
 int mm3_coop_view_mode(void) { return s_view; }
+int mm3_coop_view_locked(void) { return T.active || ram(0x50) || !(ram(0x2A)&0x20); }
 void mm3_coop_view_policy(void)
 {
     if (mm3_coop_independent()) cyc_video_request_width(s_view == 1 ? 512 : 256);
@@ -570,12 +571,9 @@ static void after_return(void)
     capture_combat(&C.players[C.anchor]); C.current = C.draw_owner; project_combat(&C.players[C.current]); C.draw = 0;
 }
 /* Graphics are captured through the native per-entity draw routine. */
-void mm3_coop_draw(void)
+static void draw_player(int guest)
 {
-    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 ||
-        (ram(0x30) >= 0x0C && T.active != 2 && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
-    capture(&C.players[C.anchor]);
-    int guest = C.anchor ^ 1, camera = ram(0xF9) * 256 + ram(0xFC);
+    int camera = ram(0xF9) * 256 + ram(0xFC);
     if (L.teleport[guest] == TELE_HIDDEN) { C.players[guest].building.count = 0; return; }
     C.current = (uint8_t)guest; project(&C.players[guest]);
     int shifted = ram(0x380) * 256 + ram(0x360) - 128;
@@ -621,6 +619,16 @@ void mm3_coop_draw(void)
     } else { f->count = 0; C.failures++; }
     C.current = C.anchor; project(&C.players[C.anchor]); s_inside = 0; cyc_mod_set_regs(&original);
 }
+void mm3_coop_draw(void)
+{
+    if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 ||
+        (ram(0x30) >= 0x0C && T.active != 2 && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
+    capture(&C.players[C.anchor]);
+    /* Each independent view owns a native camera. Drawing actor0 against the
+     * old common camera can deactivate a living player after a distant handoff. */
+    if (mm3_coop_independent()) draw_player(C.anchor);
+    draw_player(C.anchor^1);
+}
 int mm3_coop_latch(void)
 {
     if (!s_on) return 0;
@@ -654,13 +662,15 @@ static int picture_owner(void)
 { return P.valid && !memcmp(P.shown,cyc_render_oam(),sizeof P.shown) ? P.shown_owner : C.anchor; }
 int mm3_coop_insert_slot(void)
 {
-    return s_on && C.initialized && P.valid && C.players[picture_owner()^1].shown.count &&
+    int owner = picture_owner();
+    int count = C.players[owner^1].shown.count || (mm3_coop_independent() && C.players[owner].shown.count);
+    return s_on && C.initialized && P.valid && count &&
         !memcmp(P.shown,cyc_render_oam(),sizeof P.shown) ? P.insert : -1;
 }
-int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
+static int paint_player(uint32_t *out, int width, int origin, const uint8_t *opaque, int guest)
 {
     if (!s_on || !C.initialized || ram(0xF8) == 1) return 0;
-    int owner = C.current, guest = picture_owner() ^ 1;
+    int owner = C.current;
     Picture *f = &C.players[guest].shown;
     if (!f->count) return 0;
     C.current = (uint8_t)guest;
@@ -687,6 +697,12 @@ int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
     }
     C.current = (uint8_t)owner;
     return 1;
+}
+int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
+{
+    int owner = picture_owner(), result = 0;
+    if (mm3_coop_independent()) result = paint_player(out,width,origin,opaque,owner);
+    return paint_player(out,width,origin,opaque,owner^1) || result;
 }
 int mm3_coop_present_begin(void) { int previous = C.current; if (s_on) C.current = (uint8_t)picture_owner(); return previous; }
 void mm3_coop_present_end(int previous) { C.current = (uint8_t)previous; }

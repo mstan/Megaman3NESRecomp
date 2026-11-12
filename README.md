@@ -201,8 +201,9 @@ two's controls are kept separate from the retail cartridge's debug controls.
 Ordinary enemies and pickups use the nearer living player. A survivor retains
 control and stage music; a team wipe uses the native shared-life retry. Native
 health and ammo refills keep their recipient's inventory and drawing context.
-Start opens two native inventory panels. Each player selects their own equipment;
-the player who opened the menu confirms resume with Start. Energy Tanks use one
+Start pauses the world. Shared view shows the pausing player's native inventory
+and accepts that player's choices. Separate views show each player's own usable
+inventory panel; the player who opened the menu confirms resume with Start. Energy Tanks use one
 shared stock and refill only the requesting player, including simultaneous use
 of the last tank. The native menu layout, cursors, weapon graphics and Rush
 transformation timing are retained, with a Proto Man portrait for that player.
@@ -222,8 +223,14 @@ route has been checked from native checkpoint retry through player-two damage,
 boss defeat, weapon award, password screen and entry into the next stage.
 This remains a development slice: boss/script and transition coverage, full
 lifecycle/camera behavior and online qualification are pending.
-The development `--coop-view split|p1|p2` profile now uses two fixed 256-pixel
+The development `--coop-view shared|split|p1|p2` option selects the view. Separate
+views use two fixed 256-pixel
 simulation rectangles. Native enemy construction, nearest-player targeting,
 respawn identity and the sixteen-enemy pool operate on their union, excluding
-the gap between distant players. These view modes produce the same simulation;
-their separate panel presentation is still under development.
+the gap between distant players. Split, player-one-only and player-two-only
+views produce the same simulation. Each panel keeps its own native HUD and
+camera; a dead player's panel follows the survivor. Personal sprites use their
+own native camera during capture, including a distant survivor handoff. Menus
+retain the native bottom-panel position over a background-only scene.
+Mutable terrain, additional room/script behavior and online play remain under
+development.

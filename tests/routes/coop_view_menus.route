@@ -1,0 +1,34 @@
+# Current-build prerequisites: a fresh Snake Man co-op stage profile at7799.
+# Shared and independent profiles are distinct; do not load one as the other.
+# Named personal preconditions: both ground state0, HP10/20, inv127,
+# Buster selected; acquire A3/A4/AD and place P1 at160, P2 at220/y180.
+# AF=1 is shared stock. These are setup bypasses, never completion flags.
+# In shared view, P2 pauses and only its native panel/controls are active.
+# In split/p1/p2, both personal panels are usable during the common pause.
+# Expected selection: shared [Buster,Magnet], separate [Gemini,Magnet].
+# Compare native/interpreter, full current state and cold continuation/PCM.
+7800 1:-
+7800 2:-
+7800 POKE AF 01
+7802 2:START
+7812 2:-
+7822 1:DOWN
+7822 2:RIGHT
+7825 1:-
+7825 2:-
+7828 1:A
+7828 2:A
+7830 1:-
+7830 2:-
+7842 2:START
+7844 2:-
+# Native UI oracle: compare both256x61 interiors at y177..237 with the
+# original inventory, retaining native names, bars, cursors and counters.
+# Menu backdrop oracle: at7818 hide test-owned OAM200-2FF. Actual native PNG
+# must change while the complete presented menu remains identical.
+# Moving views: native ground at P1x128/y180 and P2x808/y148. Hold P1 Right,
+# P2 Left+A, then Left. Both coordinates/cameras must advance and actor0
+# must remain active; capture at7850 and continue to7900 with exact PCM.
+# Distant handoff: P1 HP1 at actual Snakey328/84, P2 HP28 at808/148.
+# Let real contact kill P1, then move P2. Repeat both character rosters:
+# native life count stays2, P2 keeps native movement/animation and own art.
