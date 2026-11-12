@@ -530,6 +530,20 @@ static int enemy_done(uint16_t address)
     if (warp && !T.active) { change_anchor(chosen);paired_script(3); }
     return 0;
 }
+static int hard_man_effect(uint16_t address)
+{
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated()) return 0;
+    CycModRegs r = {0};cyc_mod_regs(&r);
+    if (r.x < 16 || r.x >= 32 || ram(0x320+r.x) != 0xD0 ||
+        cyc_mod_peek(address) != 0xA5 || cyc_mod_peek(address+1) != 0x30 ||
+        cyc_mod_peek(address+2) != 0xC9 || cyc_mod_peek(address+3) != 0x0E) return 0;
+    int seat = C.current^1, state = mm3_coop_read(seat,0x30);
+    /* The two retail slam branches stun every living player; the final
+     * landing releases them to the original airborne controller. */
+    if (alive(seat) && state != 0x0E && (address == 0xA1A7 || state != 0x0F))
+        C.players[seat].ram[s_index[0x30]-1] = address == 0xA1A7 ? 1 : 0x0F;
+    return 0;
+}
 static int death_music(uint16_t address)
 {
     (void)address;
@@ -1039,6 +1053,9 @@ static void enabled(int on)
     mm3_coop_view_policy();
     nes_mod_set_function_hook_enabled("mm3.coop.pool-end", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.hard-slam", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.hard-dive", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.hard-land", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.frozen-hit", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
@@ -1234,6 +1251,9 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
 {
     nes_mod_register_function_entry_plugin("mm3.coop.pool-end", 0x8014, pool_boundary);
     nes_mod_register_function_entry_plugin("mm3.coop.enemy-done", 0x808B, enemy_done);
+    nes_mod_register_function_entry_plugin("mm3.coop.hard-slam", 0xA0F7, hard_man_effect);
+    nes_mod_register_function_entry_plugin("mm3.coop.hard-dive", 0xA157, hard_man_effect);
+    nes_mod_register_function_entry_plugin("mm3.coop.hard-land", 0xA1A7, hard_man_effect);
     nes_mod_register_function_entry_plugin("mm3.coop.frozen-hit", 0x8083, frozen_weapon_hit);
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);

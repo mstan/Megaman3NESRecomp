@@ -928,6 +928,24 @@ addr = 0xA213
 bytes = "E6 19 E6 50 A9 74 C5 EA"
 include_internal = true
 
+[[mod_function_hook]]
+id = "mm3.coop.hard-slam"
+addr = 0xA0F7
+bytes = "A5 30 C9 0E F0 68 C9 0F"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.hard-dive"
+addr = 0xA157
+bytes = "A5 30 C9 0E F0 08 C9 0F"
+include_internal = true
+
+[[mod_function_hook]]
+id = "mm3.coop.hard-land"
+addr = 0xA1A7
+bytes = "A5 30 C9 0E F0 04 A9 01"
+include_internal = true
+
 [functions]
 fixed = [
     0xD9F0,

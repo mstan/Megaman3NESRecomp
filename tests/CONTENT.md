@@ -49,3 +49,10 @@ For the Kamegoro encounter, the remaining-wave health counter is `$B0`, while
 the real current wave's health cost and the living turtle to one HP. The real
 Buster hit must kill that turtle, let the native maker scan finish, and advance
 to the next fortress stage. Never set the defeat or stage-clear flags.
+
+Hard Man's ordinary slam and head-first descent each stun both living players.
+The original final landing releases both to their native airborne controllers.
+Use the real landing and shake code after a short phase/position prerequisite;
+do not assign either player's stun or release as the asserted result. Compare
+both branches with the interpreter and a cold state saved during the stun,
+including current-build pictures and the exact PCM tail.
