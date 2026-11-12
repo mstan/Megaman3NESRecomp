@@ -142,6 +142,7 @@ static void view_range(int cam, int *left, int *right)
 }
 int mm3_ws_room_limits(int *left, int *right)
 {
+    ensure_stage();
     if (!left || !right || s_stage != ram(0x22)) return 0;
     view_range(ram(0xF9)*256+ram(0xFC),left,right);
     return *right-*left >= 256;
@@ -158,6 +159,56 @@ static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
     *tile = m[(r & 1 ? 0x1D00 : 0x1B00) + (c & 1) * 0x100 + m16];
     *palette = m[0x1F00 + m16] & 3;
     if ((m[0x1F00+m16]&0xF0)==0x70 && mm3_world_destroyed(screen,c/2,r/2)) *tile=0;
+}
+
+typedef struct {
+    char magic[4];
+    uint8_t pending,reserved[3];
+    int32_t old_camera;
+    uint8_t bytes[1024];
+} CameraRing;
+static CameraRing s_camera_ring;
+
+int mm3_ws_rebase_camera(int camera)
+{
+    if (s_stage != ram(0x22) || camera < 0 || camera > 65535 || cyc_mod_isolated()) return 0;
+    uint8_t ring[1024] = {0};
+    int first = camera/8;
+    for (int y = 0; y < 32; y++) for (int x = 0; x < 32; x++) {
+        uint8_t tile,palette;
+        int wc = first+((x-first)&31);
+        level_tile(wc,y,&tile,&palette);
+        if (y < 30) ring[y*32+x] = tile;
+        if (!(x&1) && !(y&1)) {
+            int at = 960+(y/4)*8+x/4,shift = (y&2)*2+(x&2);
+            ring[at] |= (uint8_t)(palette<<shift);
+        }
+    }
+    if (!s_camera_ring.pending) s_camera_ring.old_camera = ram(0xF9)*256+ram(0xFC);
+    memcpy(s_camera_ring.bytes,ring,sizeof ring);
+    s_camera_ring.pending = 1;
+    for (int i = 0; i < 64; i++) cyc_mod_poke((uint16_t)(0x640+i),ring[960+i]);
+    return 1;
+}
+
+static int camera_get(uint8_t *out,int cap)
+{
+    if (cap < (int)sizeof s_camera_ring) return -1;
+    memcpy(s_camera_ring.magic,"CR02",4);memcpy(out,&s_camera_ring,sizeof s_camera_ring);
+    return sizeof s_camera_ring;
+}
+static int camera_valid(const uint8_t *in,int size)
+{
+    if (!size) return 1;
+    CameraRing n;if (!in || size != (int)sizeof n) return 0;memcpy(&n,in,size);
+    return !memcmp(n.magic,"CR02",4) && n.pending <= 1 &&
+        !(n.reserved[0]|n.reserved[1]|n.reserved[2]) && n.old_camera >= 0 && n.old_camera <= 65535;
+}
+static int camera_set(const uint8_t *in,int size)
+{
+    if (!camera_valid(in,size)) return 0;
+    if (size) memcpy(&s_camera_ring,in,size);else memset(&s_camera_ring,0,sizeof s_camera_ring);
+    return 1;
 }
 
 /* ---- objects beyond the native view ----
@@ -285,6 +336,12 @@ static int nmi_latch(uint16_t addr)
 {
     (void)addr;
     if (ram(0xEE) | ram(0x9A)) return 0;
+    if (s_camera_ring.pending) {
+        /* Native process_frame_and_yield clears EE only after the complete
+         * OAM pass. Use that same publication point for its replacement ring. */
+        if (!cyc_mod_ciram_upload(0,s_camera_ring.bytes,sizeof s_camera_ring.bytes)) return 0;
+        s_camera_ring.pending = 0;
+    }
     s_wide_shown = s_wide_cur;
     s_panel_frame = s_panel_build;
     memcpy(s_panel_frame.oam,cyc_cpu_ram()+0x200,sizeof s_panel_frame.oam);
@@ -489,7 +546,7 @@ static int rects_valid(const uint8_t *in, int size)
 static int rects_set(const uint8_t *in, int size)
 { if (!rects_valid(in,size)) return 0; if (size) memcpy(&s_rects,in,size); else memset(&s_rects,0,sizeof s_rects); return 1; }
 void mm3_ws_coop_reset(void)
-{ s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; }
+{ s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; memset(&s_camera_ring,0,sizeof s_camera_ring); }
 
 static int hud_part(uint16_t address)
 {
@@ -592,6 +649,8 @@ static void register_hooks(void)
     nes_mod_register_savestate_validator("mm3.view-rects",rects_valid);
     nes_mod_register_savestate_hook("mm3.view-panels",panels_get,panels_set);
     nes_mod_register_savestate_validator("mm3.view-panels",panels_valid);
+    nes_mod_register_savestate_hook("mm3.camera-ring",camera_get,camera_set);
+    nes_mod_register_savestate_validator("mm3.camera-ring",camera_valid);
 }
 
 static void enable_hooks(bool on)
@@ -669,7 +728,7 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
     for (int y = 0; y < 240; y += 8)
         if ((cyc_render_line_mask(y) & 8) && (cyc_render_line_scroll_x(y) & 255) != sx)
             return fallback("split scroll");
-    int ram_cam = ram(0xF9) * 256 + ram(0xFC);
+    int ram_cam = s_camera_ring.pending ? s_camera_ring.old_camera : ram(0xF9) * 256 + ram(0xFC);
     int cam = ram_cam + (((sx - (ram_cam & 255)) + 128) & 255) - 128;
 
     /* Rows: a vertical transition shows the bottom of one screen above the
@@ -907,6 +966,7 @@ void mm3_ws_refresh_policy(void)
 
 void mm3_ws_power_on(void)
 {
+    memset(&s_camera_ring,0,sizeof s_camera_ring);
     s_stage = -1;
     s_win_valid = false;
     s_wide_n[0] = s_wide_n[1] = 0;

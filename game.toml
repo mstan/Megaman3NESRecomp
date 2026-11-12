@@ -843,6 +843,12 @@ bytes = "48 A9 00 85 5A 85 74 85"
 include_internal = true
 
 [[mod_function_hook]]
+id = "mm3.coop.camera"
+addr = 0xE16A
+bytes = "A5 2A 29 20 D0 03 4C 28"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.coop.horizontal"
 addr = 0xE2A5
 bytes = "A5 00 85 2A B9 41 AA 29"

@@ -1,0 +1,38 @@
+# Start Snake Man normally with co-op enabled. Use either roster and repeat
+# shared stock/Fit and separate views. Boundary positions below are a traversal
+# bypass; the lethal contact, survivor movement and camera handoff remain native.
+0 -
+6000 START
+6010 -
+6200 UP
+6210 -
+6400 START
+6410 -
+7300 1:RIGHT
+7300 2:RIGHT
+7400 1:RIGHT+A
+7400 2:RIGHT+A
+7440 1:RIGHT
+7440 2:RIGHT
+7600 1:RIGHT+DOWN+A
+7600 2:RIGHT+DOWN+A
+7601 1:RIGHT+DOWN
+7601 2:RIGHT+DOWN
+7630 1:RIGHT
+7630 2:RIGHT
+7750 1:-
+7750 2:-
+# Protect both during this setup route, then save initialized state at7799.
+# At7800 configure P1 x328/y84, air1, HP1, invulnerability0, Buster;
+# P2 x808/y148, ground0, HP28, invulnerability127, Buster. Zero both Y velocities.
+# The authored Snakey contact must kill P1; do not assign death flags.
+7800 1:-
+7800 2:-
+7804 2:LEFT+A
+7820 2:LEFT
+7860 2:-
+# Expected: P2 remains active, native controls move it left, native camera
+# centers the survivor within8pixels, room/progress and one shared life remain
+# correct. Native/interpreter and cold7802 image/state/PCM must agree.
+# Inspect first7801..7807 individually: a camera-ring refill must publish only
+# in NMI after a complete native draw. A lag NMI repeats the intact prior scene.

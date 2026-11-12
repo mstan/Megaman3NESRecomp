@@ -174,6 +174,33 @@ static void victory_follow(void)
     C.current = C.anchor; project(&C.players[C.anchor]); T.active = 2; T.priming = 0;
     follow_partner();
 }
+static int before_camera(uint16_t address)
+{
+    (void)address;
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || T.active ||
+        cyc_mod_isolated() || ram(0x50) || ram(0xF8) || ram(0xFA) || ram(0xFD) || !(ram(0x2A)&0x20)) return 0;
+    int old = ram(0xF9)*256+ram(0xFC),x = ram(0x360)+ram(0x380)*256;
+    if (!simulation_alive(C.anchor) || (x >= old && x < old+256)) return 0;
+    int lo,hi;
+    if (!mm3_ws_room_limits(&lo,&hi)) return 0;
+    int next = x-128;
+    if (next < lo) next = lo;
+    if (next+256 > hi) next = hi-256;
+    if (next == old) return 0;
+    int cursor = ram(0x29)*32+ram(0x24)+next/8-old/8;
+    int base = ram(0xF9)-ram(0x2D);
+    /* Finish the picture already drawn before replacing the PPU's backing
+     * ring. The next native draw and NMI publish the new camera together. */
+    int width,height;cyc_render_present(&width,&height);
+    if (!mm3_ws_rebase_camera(next)) { C.failures++; return 0; }
+    poke(0x24,cursor&31);poke(0x29,(unsigned)cursor>>5);
+    poke(0xF9,next>>8);poke(0xFC,next);poke(0x25,next);
+    poke(0x2D,(next>>8)-base);poke(0x27,ram(0x360));
+    /* Pending packets address the previous physical ring. Native camera and
+     * room coroutines resume with the new ring and retain their own gates. */
+    poke(0x19,0);poke(0x1A,0);
+    return 0;
+}
 static int transition_begin(uint16_t address)
 {
     if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || T.active) return 0;
@@ -799,6 +826,7 @@ static void enabled(int on)
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.retry-entry", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.camera", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.horizontal", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.vertical", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.boss-exit", s_on);
@@ -942,6 +970,7 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);
     nes_mod_register_function_entry_plugin("mm3.coop.retry-entry", 0xCC18, retry_entry);
+    nes_mod_register_function_entry_plugin("mm3.coop.camera", 0xE16A, before_camera);
     nes_mod_register_function_entry_plugin("mm3.coop.horizontal", 0xE2A5, transition_begin);
     nes_mod_register_function_entry_plugin("mm3.coop.vertical", 0xE372, transition_begin);
     nes_mod_register_function_entry_plugin("mm3.coop.boss-exit", 0xCB5B, scene_exit);

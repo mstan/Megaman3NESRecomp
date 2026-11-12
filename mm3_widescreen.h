@@ -22,4 +22,6 @@ void mm3_ws_describe(char *out, size_t n);
 void mm3_ws_refresh_policy(void);
 /* Immutable decoded bounds of the native camera's current room segment(s). */
 int mm3_ws_room_limits(int *left, int *right);
+/* Queue its single horizontal tile ring for the next native NMI publication. */
+int mm3_ws_rebase_camera(int camera);
 void mm3_ws_coop_reset(void);

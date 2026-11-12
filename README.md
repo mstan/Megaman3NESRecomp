@@ -221,8 +221,8 @@ Native horizontal shutters and vertical scrolls carry the partner through the
 same camera coroutine while preserving personal HP and ammo. The Snake Man
 route has been checked from native checkpoint retry through player-two damage,
 boss defeat, weapon award, password screen and entry into the next stage.
-This remains a development slice: boss/script and transition coverage, full
-lifecycle/camera behavior and online qualification are pending.
+This remains a development slice: additional boss/script and transition
+coverage, room leadership and online qualification are pending.
 The development `--coop-view shared|split|p1|p2` option selects the view. Separate
 views use two fixed 256-pixel
 simulation rectangles. Native enemy construction, nearest-player targeting,
@@ -232,6 +232,9 @@ views produce the same simulation. Each panel keeps its own native HUD and
 camera; a dead player's panel follows the survivor. Personal sprites use their
 own native camera during capture, including a distant survivor handoff. Menus
 retain the native bottom-panel position over a background-only scene.
+The native camera also follows a distant survivor in shared and separate views.
+Its tile ring and streaming cursors are rebased together; the replacement ring
+publishes with a complete native OAM draw in NMI to preserve the prior picture.
 Gemini Man's block destruction updates the common terrain and creates its native
 child objects for either player's shots. Remote destruction preserves the live
 native background, and later shots can pass through the opened space.
