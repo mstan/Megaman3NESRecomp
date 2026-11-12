@@ -621,7 +621,7 @@ static void collision(int kind, unsigned entry)
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (C.scope) {
         if (C.scope != kind || r.s != C.original.s) return;
-        int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB0) & 31);
+        int victory = T.active != 2 && kind == 2 && ram(0x30) == 0x0C && ((ram(0x5A) & 0x80) || ram(0x22) == 14) && !(ram(0xB0) & 31);
         if (kind == 2) reserve_refight_effects();
         capture_combat(&C.players[C.current]); C.contacts[C.current]++;
         int guest = C.current;
@@ -794,7 +794,7 @@ void mm3_coop_frame_end(void)
     if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
     if (E.waiting && !available(E.waiting&1 ? 1 : 0)) wait_finish(1);
-    if (ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB0) & 31)) victory_follow();
+    if (ram(0x30) == 0x0C && ((ram(0x5A) & 0x80) || ram(0x22) == 14) && !(ram(0xB0) & 31)) victory_follow();
     select_tick();
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
         change_anchor(C.anchor^1);

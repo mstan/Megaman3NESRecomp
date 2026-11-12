@@ -56,3 +56,11 @@ Use the real landing and shake code after a short phase/position prerequisite;
 do not assign either player's stun or release as the asserted result. Compare
 both branches with the interpreter and a cold state saved during the stun,
 including current-build pictures and the exact PCM tail.
+
+The Holograph encounter uses `$B0` for HP but does not set the ordinary `$5A`
+boss flag. Defeating its real spawn `$2C` with either player's real Buster
+must transfer the native victory controller, carry both players through the
+original exit, and advance to Wily 4. Test the actual real body rather than
+the two decoys. A visible damage window and one HP are allowed prerequisites.
+Compare both attacker roles with the interpreter and a cold snapshot saved
+during the native victory sequence, including exact PCM continuation.
