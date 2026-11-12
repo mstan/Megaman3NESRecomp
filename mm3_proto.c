@@ -101,7 +101,7 @@ void mm3_proto_refresh_hooks(void)
 {
     static const char *ids[] = {"mm3.proto.pose", "mm3.proto.part", "mm3.proto.pose-done", "mm3.proto.damage",
         "mm3.proto.shots", "mm3.proto.shield", "mm3.proto.reflected-hit", "mm3.proto.menu-begin", "mm3.proto.menu-part",
-        "mm3.proto.muzzle"};
+        "mm3.proto.muzzle", "mm3.proto.direct-hit"};
     for (unsigned i = 0; i < sizeof ids / sizeof ids[0]; i++)
         nes_mod_set_function_hook_enabled(ids[i], s_on || (i < 3 && mm3_charge_available()));
 }
@@ -504,8 +504,13 @@ static int reflected_hit(uint16_t address)
     CycModRegs r = {0}; cyc_mod_regs(&r);
     /* A reflected native call must finish before the enclosing co-op hit
      * scope restores its owner or starts another guest pass. */
-    if (!(R.running && r.s == R.original.s)) mm3_coop_weapon_hit();
+    if (!(R.running && r.s == R.original.s)) mm3_coop_weapon_hit(address);
     cyc_mod_regs(&r);
+    /* A normal 8102 call falls through here after already processing both
+     * inventories and reflected shots. Explicit 8003 calls bypass its flags;
+     * retain that native contract, including an in-flight reflection return. */
+    if (address == 0x8109 && (r.x >= 32 || (ram(0x480+r.x)&0x60)) &&
+        !(R.running && R.original.pc == address && r.s == R.original.s)) return 0;
     if (!s_on || cyc_mod_isolated()) return 0;
     if (R.running) {
         if (r.s != R.original.s) return 0;
@@ -689,6 +694,7 @@ NES_MOD_CONSTRUCTOR(register_mm3_proto)
     nes_mod_register_function_entry_plugin("mm3.proto.muzzle", 0xD17B, muzzle);
     nes_mod_register_function_entry_plugin("mm3.proto.shield", 0x8097, shield);
     nes_mod_register_function_entry_plugin("mm3.proto.reflected-hit", 0x8102, reflected_hit);
+    nes_mod_register_function_entry_plugin("mm3.proto.direct-hit", 0x8109, reflected_hit);
     nes_mod_register_function_entry_plugin("mm3.proto.menu-begin", 0xA30C, menu_begin);
     nes_mod_register_function_entry_plugin("mm3.proto.menu-part", 0xA341, menu_part);
     nes_mod_register_reset_callback(reset);

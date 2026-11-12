@@ -807,6 +807,13 @@ addr = 0x8102
 bytes = "BD 80 04 29 60 F0 39 AD"
 include_internal = true
 
+# Gemini uses the native damage body through its 8003 entry trampoline.
+[[mod_function_hook]]
+id = "mm3.proto.direct-hit"
+addr = 0x8109
+bytes = "AD C0 05 C9 A3 D0 03 4C"
+include_internal = true
+
 [[mod_function_hook]]
 id = "mm3.charge.damage"
 addr = 0x81C9

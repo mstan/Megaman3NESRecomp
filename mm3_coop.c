@@ -622,7 +622,21 @@ static void collision(int kind, unsigned entry)
     cyc_mod_set_regs(&r);
 }
 void mm3_coop_contact(void) { collision(1, 0x8097); }
-void mm3_coop_weapon_hit(void) { collision(2, 0x8102); }
+void mm3_coop_weapon_hit(unsigned entry)
+{
+    if (entry == 0x8109) {
+        /* Gemini calls the native damage body directly while its ordinary
+         * hitbox flags are clear. Ordinary 8102 calls already own a guest
+         * pass; their fall-through must not create another one here. */
+        if (C.scope) {
+            if (C.original.pc != entry) return;
+        } else {
+            CycModRegs r = {0};cyc_mod_regs(&r);
+            if (r.x >= 32 || (ram(0x480+r.x)&0x60)) return;
+        }
+    }
+    collision(2,entry);
+}
 static int frozen_weapon_hit(uint16_t address)
 {
     if (!s_on || !C.initialized || s_inside || cyc_mod_isolated() || C.ai != 2) return 0;
