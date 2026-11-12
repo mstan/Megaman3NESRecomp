@@ -526,6 +526,12 @@ int mm3_coop_dispatch(void)
         (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && available(C.anchor^1))) ||
         (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
+    if (T.active == 2 && ram(0x30) == 0 && ram(0x22) >= 8 && ram(0x22) < 12 && ram(0xF9) < 0x18) {
+        /* The first Doc Robot victory returns to native ground control in
+         * the same stage. Publish its final paired pose once, then release
+         * both controllers instead of following until a stage exit. */
+        follow_partner();T.active = 0;
+    }
     if (ram(0x30) == 9) {
         C.players[C.anchor^1].previous = C.players[C.anchor^1].held;
         return 0;

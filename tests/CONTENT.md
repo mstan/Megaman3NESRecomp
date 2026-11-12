@@ -20,3 +20,10 @@ Compare native and interpreter continuations, including PCM. Save during the
 native victory sequence and confirm that a cold continuation produces the
 same current-build state, final pictures and PCM tail. Keep the ordinary
 native projectile reflection regression to check the `$8102` fall-through.
+
+After the first Doc Robot in each Doc stage, the original victory routine
+returns to ground control in the same stage. Both players must then move
+independently. The paired victory follow must end there, while the final
+Doc Robot's native teleport and stage exit keep their normal paired behavior.
+The Air Man check also compares native/interpreter output and a cold state
+saved during the victory sequence, including the PCM tail.
