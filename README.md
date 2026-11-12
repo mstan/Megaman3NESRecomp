@@ -234,6 +234,8 @@ views produce the same simulation. Each panel keeps its own native HUD and
 camera; a dead player's panel follows the survivor. Personal sprites use their
 own native camera during capture, including a distant survivor handoff. Menus
 retain the native bottom-panel position over a background-only scene.
+Split and individual layouts retain their logical width through aspect and
+window-size changes. Paused P1/P2 selection preserves the completed picture.
 The native camera also follows a distant survivor in shared and separate views.
 Its tile ring and streaming cursors are rebased together; the replacement ring
 publishes with a complete native OAM draw in NMI to preserve the prior picture.

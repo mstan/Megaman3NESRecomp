@@ -203,7 +203,7 @@ void mm3_proto_draw_latch(void)
     mm3_charge_draw_latch();
     for (int i = 0; i < 2; i++) { s_menus[i].shown = s_menus[i].building; s_states[i].shown = s_states[i].building; }
     /* Menus also DMA OAM, without running the stage's entity drawing pass. */
-    for (int slot = 0; !mm3_coop_independent() && slot < 64; slot++) if (S.shown.mask & (1ull << slot))
+    for (int slot = 0; !mm3_ws_private_primary() && slot < 64; slot++) if (S.shown.mask & (1ull << slot))
         if (memcmp(S.shown.oam + slot * 4, cyc_cpu_ram() + 0x200 + slot * 4, 4)) {
             S.shown.mask = 0; break;
         }

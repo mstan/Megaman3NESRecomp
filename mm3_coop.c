@@ -82,8 +82,8 @@ int mm3_coop_view_mode(void) { return s_view; }
 int mm3_coop_view_locked(void) { return T.active || ram(0x50) || !(ram(0x2A)&0x20); }
 void mm3_coop_view_policy(void)
 {
-    if (mm3_coop_independent()) cyc_video_request_width(s_view == 1 ? 512 : 256);
-    else cyc_video_set_mode(mm3_ws_mode());
+    cyc_video_override_width(mm3_coop_independent() ? (s_view == 1 ? 512 : 256) : 0);
+    mm3_ws_view_changed();
 }
 int mm3_coop_seat(void) { return s_on ? C.current : 0; }
 int mm3_coop_character(int seat) { return s_roster ^ (seat & 1); }
@@ -767,7 +767,7 @@ static int picture_owner(void)
 int mm3_coop_insert_slot(void)
 {
     int owner = picture_owner();
-    int count = C.players[owner^1].shown.count || (mm3_coop_independent() && C.players[owner].shown.count);
+    int count = C.players[owner^1].shown.count || (mm3_ws_private_primary() && C.players[owner].shown.count);
     return s_on && C.initialized && P.valid && count &&
         !memcmp(P.shown,cyc_render_oam(),sizeof P.shown) ? P.insert : -1;
 }
@@ -805,7 +805,7 @@ static int paint_player(uint32_t *out, int width, int origin, const uint8_t *opa
 int mm3_coop_paint(uint32_t *out, int width, int origin, const uint8_t *opaque)
 {
     int owner = picture_owner(), result = 0;
-    if (mm3_coop_independent()) result = paint_player(out,width,origin,opaque,owner);
+    if (mm3_ws_private_primary()) result = paint_player(out,width,origin,opaque,owner);
     return paint_player(out,width,origin,opaque,owner^1) || result;
 }
 int mm3_coop_present_begin(void) { int previous = C.current; if (s_on) C.current = (uint8_t)picture_owner(); return previous; }
@@ -1004,9 +1004,13 @@ static void reset(void) { enabled(0); s_roster = s_view = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {
-    (void)line; char b[512];
-    snprintf(b, sizeof b, "\"enabled\":%s,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"withdrawn\":%u,\"teleport\":[%u,%u],\"hold\":[%u,%u],\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
-        s_on ? "true" : "false", C.initialized, C.anchor, C.current, (unsigned long long)C.updates, (unsigned long long)C.failures,
+    char view[16],b[512];
+    if (cyc_tcp_str(line,"view",view,sizeof view) &&
+        (!s_on || !mm3_coop_option("--coop-view",view))) {
+        cyc_tcp_err(id,"view needs active co-op and shared|split|p1|p2");return;
+    }
+    snprintf(b, sizeof b, "\"enabled\":%s,\"view\":%u,\"compositing\":%u,\"protoman\":%u,\"menu\":%u,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"withdrawn\":%u,\"teleport\":[%u,%u],\"hold\":[%u,%u],\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
+        s_on ? "true" : "false",(unsigned)s_view,(unsigned)cyc_render_stock_compositing(),(unsigned)mm3_proto_available(),(unsigned)mm3_coop_menu_active(),C.initialized, C.anchor, C.current, (unsigned long long)C.updates, (unsigned long long)C.failures,
         L.withdrawn,L.teleport[0],L.teleport[1],L.hold[0],L.hold[1],
         mm3_coop_read(0,0x360) + mm3_coop_read(0,0x380)*256,mm3_coop_read(0,0x3C0),mm3_coop_read(0,0xA2)&31,
         mm3_coop_read(1,0x360) + mm3_coop_read(1,0x380)*256,mm3_coop_read(1,0x3C0),mm3_coop_read(1,0xA2)&31);
@@ -1016,7 +1020,7 @@ static void tcp(int id, const char *line)
 void mm3_coop_tcp_setup(void)
 {
 #ifdef CYC_WITH_SDL
-    cyc_tcp_register("mm3_coop", "query native two-player simulation", tcp);
+    cyc_tcp_register("mm3_coop", "native co-op state; optional view shared|split|p1|p2", tcp);
 #endif
     mm3_coop_menu_tcp_setup();
 }

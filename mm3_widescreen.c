@@ -261,6 +261,7 @@ typedef struct {
     PanelHud hud[2][21];
 } PanelFrame;
 static PanelFrame s_panel_build,s_panel_frame;
+int mm3_ws_private_primary(void) { return s_panel_frame.active != 0; }
 static uint32_t s_panel_picture[2][256*240];
 static uint8_t s_panel_opaque[256*240];
 static void panels_build(void);
@@ -546,7 +547,7 @@ static int rects_valid(const uint8_t *in, int size)
 static int rects_set(const uint8_t *in, int size)
 { if (!rects_valid(in,size)) return 0; if (size) memcpy(&s_rects,in,size); else memset(&s_rects,0,sizeof s_rects); return 1; }
 void mm3_ws_coop_reset(void)
-{ s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; memset(&s_camera_ring,0,sizeof s_camera_ring); }
+{ s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; }
 
 static int hud_part(uint16_t address)
 {
@@ -955,13 +956,15 @@ static int render(uint32_t *out, int width, int height, int native_x0, const uin
     return result;
 }
 
+void mm3_ws_view_changed(void) { cyc_render_set_compositor(render,NULL); }
 void mm3_ws_refresh_policy(void)
 {
     mm3_world_refresh();
-    int characters = mm3_proto_available() || mm3_charge_available();
+    int characters = mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled();
     enable_hooks(s_mode != NES_VIDEO_STOCK || characters);
     cyc_render_set_stock_compositing(characters);
-    cyc_render_capture_background(s_check || characters);
+    bool capture = (s_check || characters) != 0;
+    if (capture != cyc_background_enabled) cyc_render_capture_background(capture);
 }
 
 void mm3_ws_power_on(void)
@@ -977,6 +980,7 @@ void mm3_ws_power_on(void)
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
     mm3_ws_refresh_policy();
+    cyc_render_capture_background(s_check || mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled());
 }
 
 void mm3_ws_frame_end(void)
@@ -1017,7 +1021,7 @@ void mm3_ws_set_check(bool enabled)
 {
     s_check = enabled;
     s_check_bad = -1; s_check_total = 0;
-    cyc_render_capture_background(enabled || mm3_proto_available() || mm3_charge_available());
+    mm3_ws_refresh_policy();
 }
 
 void mm3_ws_save_setting(FILE *f) { fprintf(f, "Widescreen = %s\n", nes_video_geometry_name(s_mode)); }
