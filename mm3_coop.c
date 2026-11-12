@@ -193,9 +193,9 @@ static void follow_partner(void)
     unsigned i = s_index[0x5E0]-1;
     p->ram[i] = (uint8_t)((p->ram[i] & 0x80) | (ram(0x5E0) & 0x7F));
 }
-static void victory_follow(void)
+static void paired_script(unsigned active)
 {
-    if (T.active == 2) return;
+    if (T.active == active) return;
     wait_finish(0);
     capture(&C.players[C.anchor]);
     for (int seat = 0; seat < 2; seat++) {
@@ -203,9 +203,10 @@ static void victory_follow(void)
         for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
         poke(0x5B,0);poke(0x5C,0);poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
     }
-    C.current = C.anchor; project(&C.players[C.anchor]); T.active = 2; T.priming = 0;
+    C.current = C.anchor; project(&C.players[C.anchor]); T.active = (uint8_t)active; T.priming = 0;
     follow_partner();
 }
+static void victory_follow(void) { paired_script(2); }
 static int source_camera(int next)
 {
     int old = ram(0xF9)*256+ram(0xFC);
@@ -483,7 +484,8 @@ static int pool_boundary(uint16_t address)
     for (int seat = 0; seat < 2; seat++) if (simulation_read(seat,0x5B) == r.x || simulation_read(seat,0x5C) == r.x) {
         freezer = seat;break;
     }
-    if (freezer < 0 && (!(ram(0x300+r.x)&0x80) || ram(0x320+r.x) >= 0xA0)) return 0;
+    int refight_pod = ram(0x22) == 15 && ram(0x320+r.x) == 0xEB;
+    if (freezer < 0 && (!(ram(0x300+r.x)&0x80) || (ram(0x320+r.x) >= 0xA0 && !refight_pod))) return 0;
     unsigned routine = ram(0x320+r.x);
     /* These actors start the one shared HP-bar script on the native anchor.
      * A nearest-player projection would put that script in an isolated guest
@@ -508,8 +510,11 @@ static int enemy_done(uint16_t address)
     if (!s_on || !C.ai || s_inside || C.scope || cyc_mod_isolated()) return 0;
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (r.s != C.ai_stack) return 0;
+    int chosen = C.current, warp = ram(0x22) == 15 && ram(0x30) == 0x11;
     capture_combat(&C.players[C.current]); C.current = C.ai_owner; project_combat(&C.players[C.current]);
-    poke(0x27, C.ai_x); C.ai = 0; return 0;
+    poke(0x27, C.ai_x); C.ai = 0;
+    if (warp && !T.active) { change_anchor(chosen);paired_script(3); }
+    return 0;
 }
 static int death_music(uint16_t address)
 {
@@ -526,6 +531,7 @@ int mm3_coop_dispatch(void)
         (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && available(C.anchor^1))) ||
         (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
+    if (T.active == 3 && !ram(0x30)) { follow_partner();T.active = 0; }
     if (T.active == 2 && ram(0x30) == 0 && ram(0x22) >= 8 && ram(0x22) < 12 && ram(0xF9) < 0x18) {
         /* The first Doc Robot victory returns to native ground control in
          * the same stage. Publish its final paired pose once, then release
@@ -795,6 +801,8 @@ void mm3_coop_before_draw(void)
 static void after_return(void)
 {
     if (!s_on || cyc_mod_isolated()) return;
+    if (C.initialized && !s_inside && !C.scope && !C.ai && !T.active && ram(0x22) == 15 && ram(0x30) == 0x11)
+        paired_script(3);
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (T.active) {
         if (T.priming == 1 && r.pc == 0xFF6B) {
@@ -862,7 +870,7 @@ static void draw_player(int guest)
 void mm3_coop_draw(void)
 {
     if (!s_on || !C.initialized || C.scope || (C.ai && !C.draw) || s_inside || ram(0xF8) == 1 ||
-        (ram(0x30) >= 0x0C && T.active != 2 && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
+        (ram(0x30) >= 0x0C && T.active < 2 && !(ram(0x30) == 0x0E && alive(C.anchor^1)))) return;
     capture(&C.players[C.anchor]);
     /* Each independent view owns a native camera. Drawing actor0 against the
      * old common camera can deactivate a living player after a distant handoff. */
@@ -1142,7 +1150,7 @@ static int transition_valid(const uint8_t *in, int size)
 {
     if (!size) return 1;
     Transition n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
-    return !memcmp(n.magic,"CT01",4) && n.active <= 2 && n.priming <= 2 &&
+    return !memcmp(n.magic,"CT01",4) && n.active <= 3 && n.priming <= 2 &&
         (!n.priming || n.active == 1) && (n.active != 1 || ((n.entry == 0xE2A5 || n.entry == 0xE372) && n.stack >= 6));
 }
 static int transition_set(const uint8_t *in, int size)

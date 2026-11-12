@@ -27,3 +27,9 @@ independently. The paired victory follow must end there, while the final
 Doc Robot's native teleport and stage exit keep their normal paired behavior.
 The Air Man check also compares native/interpreter output and a cold state
 saved during the victory sequence, including the PCM tail.
+
+Either player can enter a native Wily refight pod. The touching player leads
+the original warp states `$11`, `$12`, then `$00`; the companion follows while
+retaining personal health, ammunition and character. Check both seats entering
+the Hard Man arena, independent controls after arrival, native/interpreter
+equality, and a cold continuation saved during the native room refill.
