@@ -120,7 +120,7 @@ int mm3_mods_equip(int next, int announce)
 
 static int player_dispatch(uint16_t address)
 {
-    if (!cyc_mod_isolated()) mm3_coop_dispatch();
+    if (!cyc_mod_isolated() && mm3_coop_dispatch()) return 1;
     if (mm3_proto_dispatch()) { mm3_charge_cancel(); W.pending = 0; return 1; }
     weapon_dispatch(address);
     mm3_charge_dispatch();

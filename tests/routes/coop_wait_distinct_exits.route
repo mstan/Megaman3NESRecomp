@@ -1,0 +1,17 @@
+# Prerequisite: Gemini room2, frame7999, after the real native first scroll.
+# --coop on --coop-wait-both on --coop-view split --charge off
+# At8000 position P2 at10:78/y6, P1 at12:88/y6, both native ladder3,
+# Y speed$014C, yscreen0, animation0A, with distinct HP/ammo.
+# Both original E3C7 links are valid. The two ends lead upward to different
+# rooms: matching direction alone must not release the first waiter.
+# P2 parks hidden at page10; P1 stays inside room2 at page12.
+# At8040 position P1 at the SAME10:78 upward boundary, retaining inventory.
+# The original link/scroll must now run once, returning both to room1/page9.
+# Boundary positioning bypasses traversal only; never set transition or exit
+# completion flags. Preserve waiting/source-page identity in current states.
+8000 1:UP
+8000 2:UP
+8003 1:-
+8003 2:-
+8040 1:UP
+8043 1:-

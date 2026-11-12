@@ -1,0 +1,11 @@
+# Prerequisite: the P2-waiting snapshot at7860 from coop_wait_ladder.
+# Set P1 HP1, invulnerability0, air1, x3:B0/y180 and zero Y velocity via
+# --coop-test-poke at7861. Create a native Met0E in world slot31 at3:B0/y180:
+# zero all24 actor fields, then flag80, routine0E, HP90, animation1B.
+# The actual native contact must produce HP0/deathE; do not assign those.
+# The hidden P2 must unhide and resume the stored native upward exit even
+# with Up released. Both native link and timed scroll still execute.
+# Keep the shared-life counter unchanged. Save during7900 and compare native
+# versus interpreter and cold current-build state/pictures/PCM continuation.
+7861 1:-
+7861 2:-

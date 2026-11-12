@@ -1,0 +1,26 @@
+# Current-build prerequisite: Snake Man co-op gameplay, frame7799.
+# --coop on --coop-wait-both on --charge off --widescreen off
+# At7800 use --coop-test-poke to place P1 at world3:B0/y180, ground0,
+# P2 at3:88/y6, ladder3, Y speed$014C, animation$0A; yscreen0 for both.
+# Give P1/P2 distinct HP13/23 and ammo11/19, without changing success flags.
+# P2 must park hidden at the validated upward exit; P1 Right still moves on
+# the actual floor. The green column at3:80 is solid and is not a floor setup.
+# At7920 position P1 at3:88/y6, ladder3 with the same native climb fields.
+# This bypasses traversal to the ladder only. The original E3C7 validator,
+# scroll, streaming and load must carry both to room1/page4 exactly once.
+# Repeat with controller labels exchanged. Save at7860 while waiting and
+# check native/interpreter/current-build cold pictures, state and PCM.
+7800 POKE F9 03
+7800 POKE FC 00
+7800 POKE FA 00
+7800 POKE 2A 23
+7800 POKE 2B 00
+7800 POKE 2C 03
+7800 POKE 2D 03
+7800 1:-
+7800 2:UP
+7803 2:-
+7840 1:RIGHT
+7850 1:-
+7920 1:UP
+7923 1:-

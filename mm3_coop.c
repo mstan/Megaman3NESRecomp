@@ -65,9 +65,14 @@ typedef struct {
     uint64_t horizontal, vertical;
 } Transition;
 static Transition T;
+typedef struct {
+    char magic[4];
+    uint8_t enabled,waiting,resume,flag[2],direction[2],page[2];
+} ExitWait;
+static ExitWait E;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
-static int s_on, s_roster, s_view, s_inside, s_projectiles;
+static int s_on, s_roster, s_view, s_wait_both, s_inside, s_projectiles;
 static unsigned s_count;
 static uint16_t s_address[PERSONAL], s_index[2048];
 static struct { uint32_t frame; uint16_t address; uint8_t seat, value; } s_pokes[32];
@@ -79,6 +84,7 @@ int mm3_coop_enabled(void) { return s_on; }
 int mm3_coop_scene_active(void) { return s_on && C.initialized; }
 int mm3_coop_independent(void) { return s_on && s_view != 0; }
 int mm3_coop_view_mode(void) { return s_view; }
+int mm3_coop_wait_both(void) { return s_wait_both; }
 int mm3_coop_view_locked(void) { return T.active || ram(0x50) || !(ram(0x2A)&0x20); }
 void mm3_coop_view_policy(void)
 {
@@ -112,11 +118,30 @@ int mm3_coop_read(int seat, unsigned a)
     if (a >= 2048 || seat < 0 || seat > 1) return 0;
     return s_on && C.initialized && s_index[a] ? C.players[seat].ram[s_index[a] - 1] : ram(a);
 }
-static int alive(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
+static int available(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
+static int alive(int seat) { return !(E.waiting & (1u<<seat)) && available(seat); }
 static int simulation_read(int seat, unsigned a)
 { return seat == C.current ? ram(a) : mm3_coop_read(seat,a); }
-static int simulation_alive(int seat)
+static int simulation_available(int seat)
 { return !(L.withdrawn & (1u<<seat)) && (simulation_read(seat,0xA2)&31) && simulation_read(seat,0x30) != 0x0E; }
+static int simulation_alive(int seat)
+{ return !(E.waiting & (1u<<seat)) && simulation_available(seat); }
+static void wait_finish(int resume)
+{
+    unsigned waiting = E.waiting;
+    for (int seat = 0; seat < 2; seat++) if (waiting & (1u<<seat)) {
+        C.players[seat].ram[s_index[0x300]-1] = E.flag[seat];
+        if (C.current == seat) poke(0x300,E.flag[seat]);
+    }
+    E.waiting = 0;E.resume = resume ? (uint8_t)waiting : 0;
+}
+static void change_anchor(int seat)
+{
+    if (C.anchor == seat) return;
+    capture(&C.players[C.anchor]);
+    C.anchor = C.current = (uint8_t)seat;project(&C.players[seat]);
+    controls(&C.players[seat]);C.handoffs++;
+}
 int mm3_coop_nearest(int x, int y)
 {
     int chosen = C.anchor, best = 0x7FFFFFFF;
@@ -166,6 +191,7 @@ static void follow_partner(void)
 static void victory_follow(void)
 {
     if (T.active == 2) return;
+    wait_finish(0);
     capture(&C.players[C.anchor]);
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
@@ -225,6 +251,30 @@ static int exit_request(int seat,int lo,int hi,int *camera)
     if (!ok) { C.failures++;return 0; }
     return r.p&1 ? direction : 0;
 }
+static void personal_write(int seat,unsigned a,unsigned value)
+{
+    C.players[seat].ram[s_index[a]-1] = (uint8_t)value;
+    if (seat == C.current) poke(a,value);
+}
+static void wait_hold(int seat,int direction)
+{
+    if (direction == 1) personal_write(seat,0x360,0xE8);
+    else {
+        personal_write(seat,0x3C0,direction == 0x80 ? 24 : 216);
+        personal_write(seat,0x3E0,0);personal_write(seat,0x30,1);
+        personal_write(seat,0x420,0);personal_write(seat,0x440,0);personal_write(seat,0x460,0);
+    }
+}
+static void wait_hide(int seat,int direction,int camera)
+{
+    int previous = C.current;
+    C.current = (uint8_t)seat;project(&C.players[seat]);mm3_charge_cancel();
+    E.flag[seat] = ram(0x300);E.direction[seat] = (uint8_t)direction;E.page[seat] = (uint8_t)(camera>>8);
+    for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
+    poke(0x300,0);poke(0x32,0);poke(0xB5,0);capture(&C.players[seat]);
+    E.waiting |= (uint8_t)(1u<<seat);
+    C.current = (uint8_t)previous;project(&C.players[previous]);
+}
 static int before_camera(uint16_t address)
 {
     (void)address;
@@ -232,28 +282,49 @@ static int before_camera(uint16_t address)
         cyc_mod_isolated() || ram(0x50) || ram(0xF8) || ram(0xFA) || ram(0xFD) || !simulation_alive(C.anchor)) return 0;
     int lo,hi;
     if (!mm3_ws_room_limits(&lo,&hi)) return 0;
-    int entry = 0;
-    if (exit_request(C.anchor,lo,hi,&entry)) { source_camera(entry);return 0; }
-    int guest = C.anchor^1;
-    if (exit_request(guest,lo,hi,&entry)) {
-        capture(&C.players[C.anchor]);
-        C.anchor = C.current = (uint8_t)guest;project(&C.players[guest]);
-        controls(&C.players[guest]);C.handoffs++;
-        source_camera(entry);return 0;
+    capture(&C.players[C.anchor]);
+    if (E.resume) {
+        int seat = E.resume&1 ? 0 : 1;
+        E.resume = 0;change_anchor(seat);source_camera(E.page[seat]*256);return 0;
     }
-    if (!(ram(0x2A)&0x20)) return 0;
+    int entry[2] = {0,0},request[2],allowed[2] = {0,0},blocked = 0;
+    request[0] = exit_request(0,lo,hi,&entry[0]);request[1] = exit_request(1,lo,hi,&entry[1]);
+    /* Inspect both controllers before changing either. A horizontal waiter
+     * must not starve a partner's valid vertical request elsewhere in a room. */
+    int order[2] = {C.anchor^1,C.anchor};
+    for (int i = 0; i < 2; i++) {
+        int seat = order[i],peer = seat^1,direction = request[seat];
+        if (!direction) continue;
+        int matching = (request[peer] == direction && entry[peer] == entry[seat]) ||
+            ((E.waiting&(1u<<peer)) && E.direction[peer] == direction && E.page[peer] == entry[seat]/256);
+        if (!s_wait_both || !simulation_available(peer) || matching) {
+            if (matching) wait_finish(0);
+            allowed[seat] = 1;
+        } else {
+            blocked = 1;
+            if (direction == 1 || E.waiting) wait_hold(seat,direction);
+            else wait_hide(seat,direction,entry[seat]);
+        }
+    }
+    if (!alive(C.anchor) && alive(C.anchor^1)) change_anchor(C.anchor^1);
+    int lead = allowed[C.anchor] ? C.anchor : allowed[C.anchor^1] ? C.anchor^1 : -1;
+    if (lead >= 0) {
+        change_anchor(lead);source_camera(entry[lead]);return 0;
+    }
+    if (!(ram(0x2A)&0x20)) return blocked;
     int old = ram(0xF9)*256+ram(0xFC),x = ram(0x360)+ram(0x380)*256;
-    if (x >= old && x < old+256) return 0;
+    if (x >= old && x < old+256) return blocked;
     int next = x-128;
     if (next < lo) next = lo;
     if (next+256 > hi) next = hi-256;
-    source_camera(next);return 0;
+    source_camera(next);return blocked;
 }
 static int transition_begin(uint16_t address)
 {
     if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || T.active) return 0;
     CycModRegs r = {0}; cyc_mod_regs(&r);
     if (r.s < 6) { C.failures++; return 0; }
+    wait_finish(0);
     capture(&C.players[C.anchor]);
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
@@ -309,6 +380,7 @@ static int checkpoint(void)
 }
 static void initialize(void)
 {
+    memset(&E,0,sizeof E);
     int retain = L.restarting;
     uint8_t ammo[2][11];
     if (retain) for (int seat = 0; seat < 2; seat++) for (int a = 0; a < 11; a++)
@@ -434,14 +506,14 @@ static int death_music(uint16_t address)
     (void)address;
     if (!s_on || !C.initialized) return 0;
     CycModRegs r = {0}; cyc_mod_regs(&r);
-    return r.a == 0xF2 && (ram(0x30) == 0x0E || ram(0x3D) == 0x0E) && alive(C.current ^ 1);
+    return r.a == 0xF2 && (ram(0x30) == 0x0E || ram(0x3D) == 0x0E) && available(C.current ^ 1);
 }
 int mm3_coop_dispatch(void)
 {
     if (!s_on || s_inside || C.scope || C.ai || cyc_mod_isolated()) return 0;
     addresses();
     if (ram(0xF8) == 1 || ram(0x50) ||
-        (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && alive(C.anchor^1))) ||
+        (ram(0x30) >= 0x0C && !(C.initialized && ram(0x30) == 0x0E && available(C.anchor^1))) ||
         (!C.initialized && ram(0x30) == 4)) return 0;
     if (!C.initialized || C.stage != ram(0x22)) initialize();
     if (ram(0x30) == 9) {
@@ -450,7 +522,12 @@ int mm3_coop_dispatch(void)
     }
     L.advanced = 1;
     capture(&C.players[C.anchor]);
+    if (!s_wait_both && E.waiting) wait_finish(1);
+    /* Preserve the parked ladder/fall pose until the real native camera can
+     * consume it. A released Up button must not detach an orphan survivor. */
+    if (E.resume&(1u<<C.anchor)) return 1;
     int guest = C.anchor ^ 1;
+    if ((E.waiting|E.resume)&(1u<<guest)) return 0;
     CycModRegs original = {0}, r; cyc_mod_regs(&original); r = original;
     uint8_t input[4] = {ram(0x14),ram(0x15),ram(0x16),ram(0x17)}, scratch[16];
     memcpy(scratch, cyc_cpu_ram(), sizeof scratch);
@@ -614,7 +691,7 @@ static void select_tick(void)
         int next = checkpoint();
         if (next > L.checkpoint) {
             L.checkpoint = (int8_t)next;
-            for (int seat = 0; seat < 2; seat++) if (!(L.withdrawn & (1u << seat)) && !alive(seat)) L.revive |= (uint8_t)(1u << seat);
+            for (int seat = 0; seat < 2; seat++) if (!(L.withdrawn & (1u << seat)) && !available(seat)) L.revive |= (uint8_t)(1u << seat);
         }
         for (int seat = 0; seat < 2; seat++) if ((L.revive & (1u << seat)) && !L.teleport[seat]) {
             int x,y;
@@ -626,11 +703,12 @@ void mm3_coop_frame_end(void)
 {
     if (!s_on || !C.initialized || C.scope || C.ai || mm3_coop_menu_checking()) return;
     capture(&C.players[C.anchor]);
+    if (E.waiting && !available(E.waiting&1 ? 1 : 0)) wait_finish(1);
     if (ram(0x30) == 0x0C && (ram(0x5A) & 0x80) && !(ram(0xB2) & 31)) victory_follow();
     select_tick();
     if (!alive(C.anchor) && alive(C.anchor ^ 1)) {
-        C.anchor ^= 1; C.current = C.anchor; project(&C.players[C.anchor]);
-        poke(0x14, 0); poke(0x16, C.players[C.anchor].held); C.handoffs++;
+        change_anchor(C.anchor^1);
+        poke(0x14, 0); poke(0x16, C.players[C.anchor].held);
     }
     poke(0x15, 0); poke(0x17, 0); poke(0x98, 0);
     for (int i = 0; i < 2; i++) C.players[i].previous = C.players[i].held;
@@ -678,7 +756,7 @@ static void after_return(void)
 static void draw_player(int guest)
 {
     int camera = ram(0xF9) * 256 + ram(0xFC);
-    if (L.teleport[guest] == TELE_HIDDEN) { C.players[guest].building.count = 0; return; }
+    if (L.teleport[guest] == TELE_HIDDEN || (E.waiting&(1u<<guest))) { C.players[guest].building.count = 0; return; }
     C.current = (uint8_t)guest; project(&C.players[guest]);
     int shifted = ram(0x380) * 256 + ram(0x360) - 128;
     if (shifted < 0) shifted = 0;
@@ -856,6 +934,7 @@ static int stage_entry(uint16_t address)
     (void)address;
     if (s_on && !cyc_mod_isolated()) {
         mm3_ws_coop_reset();
+        memset(&E,0,sizeof E);
         C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; T.active = T.priming = 0; mm3_coop_menu_cancel();
     }
     return 0;
@@ -897,6 +976,7 @@ static void enabled(int on)
 void mm3_coop_power_on(void)
 {
     memset(&C, 0, sizeof C); memset(&L, 0, sizeof L); memset(&P,0,sizeof P); memset(&T,0,sizeof T);
+    memset(&E,0,sizeof E);
     s_checkpoint_tables = 0;
     addresses(); mm3_coop_menu_power_on();
     if (s_on && !mm3_proto_available()) mm3_proto_option("--protoman", "on");
@@ -904,6 +984,10 @@ void mm3_coop_power_on(void)
 }
 bool mm3_coop_option(const char *name, const char *value)
 {
+    if (!strcmp(name,"--coop-wait-both")) {
+        if (strcmp(value,"on") && strcmp(value,"off")) return false;
+        s_wait_both = !strcmp(value,"on");return true;
+    }
     if (!strcmp(name, "--coop-test-poke")) {
         unsigned frame, seat, address, v; int n = 0; addresses();
         if (s_poke_count == 32 || sscanf(value, "%u:%u:%x:%x%n", &frame, &seat, &address, &v, &n) != 4 ||
@@ -1000,18 +1084,31 @@ static int transition_valid(const uint8_t *in, int size)
 }
 static int transition_set(const uint8_t *in, int size)
 { if (!transition_valid(in,size)) return 0; if (size) memcpy(&T,in,size); else memset(&T,0,sizeof T); return 1; }
-static void reset(void) { enabled(0); s_roster = s_view = 0; }
+static int wait_get(uint8_t *out,int cap)
+{ if (cap < (int)sizeof E) return -1;memcpy(E.magic,"EW01",4);E.enabled = (uint8_t)s_wait_both;memcpy(out,&E,sizeof E);return sizeof E; }
+static int wait_valid(const uint8_t *in,int size)
+{
+    if (!size) return 1;
+    ExitWait n;if (!in || size != (int)sizeof n) return 0;memcpy(&n,in,size);
+    if (memcmp(n.magic,"EW01",4) || n.enabled != s_wait_both || n.waiting > 2 || n.resume > 2 || (n.waiting && n.resume)) return 0;
+    for (int seat = 0; seat < 2; seat++) if (((n.waiting|n.resume)&(1u<<seat)) &&
+        (n.direction[seat] != 0x40 && n.direction[seat] != 0x80)) return 0;
+    return 1;
+}
+static int wait_set(const uint8_t *in,int size)
+{ if (!wait_valid(in,size)) return 0;if (size) memcpy(&E,in,size);else memset(&E,0,sizeof E);return 1; }
+static void reset(void) { enabled(0); s_roster = s_view = s_wait_both = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {
-    char view[16],b[512];
+    char view[16],b[640];
     if (cyc_tcp_str(line,"view",view,sizeof view) &&
         (!s_on || !mm3_coop_option("--coop-view",view))) {
         cyc_tcp_err(id,"view needs active co-op and shared|split|p1|p2");return;
     }
-    snprintf(b, sizeof b, "\"enabled\":%s,\"view\":%u,\"compositing\":%u,\"protoman\":%u,\"menu\":%u,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"withdrawn\":%u,\"teleport\":[%u,%u],\"hold\":[%u,%u],\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
+    snprintf(b, sizeof b, "\"enabled\":%s,\"view\":%u,\"compositing\":%u,\"protoman\":%u,\"menu\":%u,\"initialized\":%u,\"anchor\":%u,\"seat\":%u,\"updates\":%llu,\"failures\":%llu,\"withdrawn\":%u,\"wait_both\":%u,\"waiting\":%u,\"resume\":%u,\"teleport\":[%u,%u],\"hold\":[%u,%u],\"players\":[{\"x\":%d,\"y\":%d,\"hp\":%d},{\"x\":%d,\"y\":%d,\"hp\":%d}]",
         s_on ? "true" : "false",(unsigned)s_view,(unsigned)cyc_render_stock_compositing(),(unsigned)mm3_proto_available(),(unsigned)mm3_coop_menu_active(),C.initialized, C.anchor, C.current, (unsigned long long)C.updates, (unsigned long long)C.failures,
-        L.withdrawn,L.teleport[0],L.teleport[1],L.hold[0],L.hold[1],
+        L.withdrawn,(unsigned)s_wait_both,E.waiting,E.resume,L.teleport[0],L.teleport[1],L.hold[0],L.hold[1],
         mm3_coop_read(0,0x360) + mm3_coop_read(0,0x380)*256,mm3_coop_read(0,0x3C0),mm3_coop_read(0,0xA2)&31,
         mm3_coop_read(1,0x360) + mm3_coop_read(1,0x380)*256,mm3_coop_read(1,0x3C0),mm3_coop_read(1,0xA2)&31);
     cyc_tcp_ok(id, b);
@@ -1046,4 +1143,6 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_savestate_validator("mm3.coop-priority",priority_valid);
     nes_mod_register_savestate_hook("mm3.coop-transition",transition_get,transition_set);
     nes_mod_register_savestate_validator("mm3.coop-transition",transition_valid);
+    nes_mod_register_savestate_hook("mm3.coop-exit-wait",wait_get,wait_set);
+    nes_mod_register_savestate_validator("mm3.coop-exit-wait",wait_valid);
 }

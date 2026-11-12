@@ -223,8 +223,13 @@ route has been checked from native checkpoint retry through player-two damage,
 boss defeat, weapon award, password screen and entry into the next stage.
 Either controller can lead native shutter and ladder transitions. Boss
 introductions keep one native health-bar fill while both controllers wait.
+The optional `--coop-wait-both on` rule holds the first player at a horizontal
+door or hides them at a valid vertical exit until the partner reaches the same
+exit. The remaining player keeps control. Different exits do not release a
+waiting player; if the active partner dies, the waiting survivor resumes their
+own native transition without spending a shared life. This rule defaults off.
 This remains a development slice: additional boss/script and transition
-coverage, optional wait-for-both behavior and online qualification are pending.
+coverage and online qualification are pending.
 The development `--coop-view shared|split|p1|p2` option selects the view. Separate
 views use two fixed 256-pixel
 simulation rectangles. Native enemy construction, nearest-player targeting,

@@ -1,0 +1,15 @@
+# Current-build prerequisite: real Snake Man checkpoint, frame8499.
+# --coop on --coop-wait-both on --charge off --widescreen off
+# Give P1/P2 distinct HP13/23 and ammo11/19 using --coop-test-poke.
+# Through frame9299, P1 must remain at page24/xE8 in room12, without a
+# shutter transition or boss spawn. P2 remains idle with its own inventory.
+# When P2 reaches the same exit, run the original E2A5 shutters once.
+# By10100 both must be in room13/page25 and native Snake Man AI D4 active.
+# Repeat with controller labels exchanged. Save during waiting and shutters;
+# compare final RAM/state/pictures and matched audio tails across backends
+# and a cold current-build continuation.
+8500 1:RIGHT
+8500 2:-
+9300 2:RIGHT
+10000 1:-
+10000 2:-

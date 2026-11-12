@@ -221,6 +221,7 @@ const CycHostExtras *cyc_host_extras(void)
         {"--coop", true, "on|off: simultaneous native players (development)"},
         {"--coop-p1", true, "megaman|protoman: complementary co-op roster"},
         {"--coop-view", true, "shared|split|p1|p2: co-op view"},
+        {"--coop-wait-both", true, "on|off: both active players meet at room exits"},
         {"--coop-test-poke", true, "FRAME:SEAT:HEXADDR:HEXVALUE: bounded personal QA precondition"}
     };
     static const CycHostExtras extras = {
