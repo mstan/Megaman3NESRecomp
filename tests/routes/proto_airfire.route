@@ -1,0 +1,21 @@
+# Current-build prerequisite: Snake Man co-op gameplay at frame7799.
+# --coop on --protoman on --coop-p1 megaman --charge off --widescreen off
+# Use --coop-test-poke to place P2 at world220/y100, air1, yscreen0,
+# zero Y fraction/velocity, no invulnerability blink, no live personal shots,
+# Buster selected and facing1. P1 remains at160/y180 on the native floor.
+# World220 is visible through this snapshot's native camera107; world100 is
+# outside its left edge and is unsuitable for a cannon-picture assertion.
+# The original shot initializer must create native Buster3 at Y103 and the
+# completed private body must use visible pose9. Repeat facing2.
+# Compare against enginee275/old muzzle Y95: pose9 and the shot shift down8
+# together, with each actual red silhouette pixel preserved at Y+8.
+# Outside the body/projectile crop, the existing scene stays pixel-identical.
+# Native/interpreter and cold current-build pictures/state/PCM must match.
+# Ground, ladder, Mega Man and Shadow Blade throw are unchanged controls.
+# Repeat with charge enabled and a matching charge-enabled boot: hold33/93
+# frames, put P2 back in the same air pose at release, then check actual
+# half/full charged actor origins atY103 and their MM4 charge-kind records.
+7800 POKE 310-31F 00
+7800 1:-
+7800 2:B
+7801 2:-

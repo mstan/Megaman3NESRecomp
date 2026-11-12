@@ -62,7 +62,7 @@ int mm3_proto_muzzle_y(int native_offset)
     int weapon = ram(0xA0);
     if (mm3_proto_selected() && (!weapon || weapon == 7 || weapon == 9 || weapon == 11)) {
         int state = ram(0x30);
-        offset = state == 1 ? -5 : state == 3 ? -4 : 3;
+        offset = state == 3 ? -4 : 3;
         if (!state && ram(0x5C0) >= 4 && ram(0x5C0) <= 6 && (ram(0x5A0) & 1)) offset = 2;
     }
     return ram(0x3C0) + offset;
