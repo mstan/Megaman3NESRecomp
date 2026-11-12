@@ -3,6 +3,13 @@
 #include <stdint.h>
 int mm3_coop_enabled(void);
 int mm3_coop_scene_active(void);
+int mm3_coop_independent(void);
+int mm3_coop_view_mode(void);
+void mm3_coop_view_policy(void);
+/* Simulation hooks publish these rectangles; presentation must latch them. */
+int mm3_coop_view_rects(int left[2]);
+int mm3_coop_nearest(int world_x, int world_y);
+int mm3_coop_spawn_project(int seat);
 int mm3_coop_seat(void);
 int mm3_coop_character(int seat);
 int mm3_coop_read(int seat, unsigned address);

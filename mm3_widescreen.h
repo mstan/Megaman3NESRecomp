@@ -20,3 +20,6 @@ void mm3_ws_set_check(bool enabled);
 /* JSON members (no braces) describing the last composed picture. */
 void mm3_ws_describe(char *out, size_t n);
 void mm3_ws_refresh_policy(void);
+/* Immutable decoded bounds of the native camera's current room segment(s). */
+int mm3_ws_room_limits(int *left, int *right);
+void mm3_ws_coop_reset(void);

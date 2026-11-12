@@ -139,6 +139,12 @@ static void view_range(int cam, int *left, int *right)
         if (r2 > *right) *right = r2;
     }
 }
+int mm3_ws_room_limits(int *left, int *right)
+{
+    if (!left || !right || s_stage != ram(0x22)) return 0;
+    view_range(ram(0xF9)*256+ram(0xFC),left,right);
+    return *right-*left >= 256;
+}
 
 /* Background tile and palette at world tile column wc, tile row r (0-29). */
 static void level_tile(int wc, int r, uint8_t *tile, uint8_t *palette)
@@ -183,6 +189,13 @@ typedef struct { int16_t x; uint8_t y, tile, attr, after, after_body, reserved; 
 static WideSprite s_wide[2][MAX_WIDE_SPRITES];
 static int s_wide_n[2], s_wide_cur, s_wide_shown = 1;
 static int s_win_left, s_win_right;   /* logical simulation view, clipped to native room segments */
+typedef struct {
+    char magic[4]; uint8_t count, reserved[3];
+    int32_t left[2], right[2];
+    uint64_t spawned, full, failed;
+    uint8_t seen[256];
+} ViewRects;
+static ViewRects s_rects;
 static unsigned long s_kept, s_spawn_widened;
 static int s_restored;
 typedef struct {
@@ -228,6 +241,8 @@ static const char *const HOOK_SPAWN = "mm3.widescreen.spawn-edges";
 static const char *const HOOK_DRAW = "mm3.widescreen.object-draw";
 static const char *const HOOK_NMI = "mm3.widescreen.nmi";
 static const char *const HOOK_PASS = "mm3.widescreen.draw-pass";
+static const char *const HOOK_SPAWN_FILTER = "mm3.widescreen.spawn-filter";
+static void simulation_window(void);
 
 /* The draw-all routine ($F034) starts a pass: capture into the buffer that is
  * not on screen. Its counter $95 is not a reliable pass key - other routines
@@ -239,6 +254,7 @@ static int begin_pass(uint16_t addr)
     if (s_wide_cur == s_wide_shown) s_wide_cur ^= 1;
     s_wide_n[s_wide_cur] = 0;
     mm3_coop_before_draw();
+    simulation_window();
     mm3_coop_picture_begin();
     mm3_proto_draw_begin();
     mm3_coop_draw();
@@ -263,17 +279,76 @@ static int nmi_latch(uint16_t addr)
 
 static void simulation_window(void)
 {
-    s_win_valid = false;
+    s_win_valid = false; s_rects.count = 0;
+    int independent = mm3_coop_independent();
     int width = cyc_video_width();
-    if (s_mode == NES_VIDEO_STOCK || width <= 256 || width > CYC_VIDEO_MAX_WIDTH || ram(0x22) >= STAGE_COUNT) return;
+    if ((mm3_coop_enabled() && !mm3_coop_scene_active()) ||
+        (!independent && (s_mode == NES_VIDEO_STOCK || width <= 256 || width > CYC_VIDEO_MAX_WIDTH)) || ram(0x22) >= STAGE_COUNT) return;
     ensure_stage();
     if (s_stage != ram(0x22)) return;
+    int views[2];
+    if (independent && mm3_coop_view_rects(views)) {
+        s_rects.count = 2;
+        for (int i = 0; i < 2; i++) { s_rects.left[i] = views[i]; s_rects.right[i] = views[i]+256; }
+        s_win_left = views[0] < views[1] ? views[0] : views[1];
+        s_win_right = views[0] > views[1] ? views[0]+256 : views[1]+256;
+        s_win_valid = true; return;
+    }
+    if (independent) return;
     int camera = ram(0xF9)*256 + ram(0xFC), left, right;
     view_range(camera,&left,&right);
     int view = camera - (width-256)/2;
     s_win_left = left > view ? left : view;
     s_win_right = right < view+width ? right : view+width;
     s_win_valid = s_win_left < s_win_right;
+    if (s_win_valid) { s_rects.count = 1; s_rects.left[0] = s_win_left; s_rects.right[0] = s_win_right; }
+}
+static int in_views(int x, int radius)
+{
+    for (int i = 0; i < s_rects.count; i++) if (x+radius >= s_rects.left[i] && x-radius < s_rects.right[i]) return 1;
+    return 0;
+}
+static int spawn_filter(uint16_t address)
+{
+    (void)address;
+    if (!mm3_coop_independent() || !mm3_coop_scene_active() || !s_win_valid || s_stage != ram(0x22) || cyc_mod_isolated()) return 0;
+    CycModRegs r = {0}; cyc_mod_regs(&r);
+    int x = s_stage_bank[0xB00+r.y]*256+s_stage_bank[0xC00+r.y];
+    return !in_views(x,24) || s_rects.seen[r.y];
+}
+static void independent_spawns(void)
+{
+    /* Native cursors keep their original rectangle. Revisit the complete
+     * authored list so a skipped gap entry can enter either view later. */
+    for (int id = 0; id < 256; id++) {
+        int page = s_stage_bank[0xB00+id]; if (page == 0xFF) break;
+        int x = page*256+s_stage_bank[0xC00+id], y = s_stage_bank[0xD00+id];
+        if (y >= 240 || !in_views(x,24)) { s_rects.seen[id] = 0; continue; }
+        if (s_rects.seen[id]) continue;
+        int duplicate = 0, free_slot = 0;
+        for (int slot = 16; slot < 32; slot++) {
+            /* Retail $9C80 also checks inactive records. A dead identifier
+             * stays reserved until another native constructor reuses it. */
+            if (ram(0x4C0+slot) == id) duplicate = 1;
+            if (!ram(0x300+slot)) free_slot = 1;
+        }
+        if (duplicate || (ram(0x150+id/8) & cyc_mod_peek((uint16_t)(0xDEC2+(id&7))))) { s_rects.seen[id] = 1; continue; }
+        if (!free_slot) { s_rects.full++; continue; }
+        CycModRegs r = {0}; cyc_mod_regs(&r); r.y = (uint8_t)id;
+        if (!cyc_mod_isolate_begin()) { s_rects.failed++; continue; }
+        mm3_coop_spawn_project(mm3_coop_nearest(x,y));
+        cyc_mod_poke(0xF7,0);
+        int ok = cyc_mod_call(0x9C80,&r), found = -1;
+        uint8_t fields[SLOT_ARRAYS];
+        for (int slot = 16; ok && slot < 32; slot++) if ((ram(0x300+slot)&0x80) && ram(0x4C0+slot) == id) { found = slot; break; }
+        if (found >= 0) for (int f = 0; f < SLOT_ARRAYS; f++) fields[f] = ram(0x300+f*32+found);
+        cyc_mod_isolate_end();
+        if (!ok) s_rects.failed++;
+        else if (found >= 0) {
+            for (int f = 0; f < SLOT_ARRAYS; f++) cyc_mod_poke((uint16_t)(0x300+f*32+found),fields[f]);
+            s_rects.spawned++; s_rects.seen[id] = 1;
+        }
+    }
 }
 
 static int spawn_edges(uint16_t addr)
@@ -281,6 +356,7 @@ static int spawn_edges(uint16_t addr)
     (void)addr;
     simulation_window();
     if (!s_win_valid) return 0;
+    if (mm3_coop_independent()) { independent_spawns(); return 0; }
     int left = cyc_mod_peek(0x00) | cyc_mod_peek(0x01) << 8;
     int right = cyc_mod_peek(0x02) | cyc_mod_peek(0x03) << 8;
     int wl = s_win_left < 0 ? 0 : s_win_left, wr = s_win_right - 1 > 0xFFFF ? 0xFFFF : s_win_right - 1;
@@ -294,7 +370,7 @@ static int object_draw(uint16_t addr)
 {
     (void)addr;
     mm3_coop_primary_begin();
-    if (!s_win_valid) return 0;
+    if (!s_win_valid || s_stage != ram(0x22)) return 0;
     CycModRegs r;
     cyc_mod_regs(&r);
     int x = r.x;
@@ -302,10 +378,20 @@ static int object_draw(uint16_t addr)
     if (!(ram((uint16_t)(0x580 + x)) & 0x10) || ram((uint16_t)(0x3E0 + x))) return 0;
     int ox = ram((uint16_t)(0x380 + x)) << 8 | ram((uint16_t)(0x360 + x));
     int cam = ram(0xF9) << 8 | ram(0xFC), dx = ox - cam;
-    if (dx >= 0 && dx < 256) return 0;                       /* the game draws it */
-    if (ox < s_win_left - OBJECT_PAD || ox >= s_win_right + OBJECT_PAD) return 0;   /* the game deletes it */
+    int independent = mm3_coop_independent();
+    int pad = independent ? 32 : OBJECT_PAD;
+    if (independent && !in_views(ox,ram(0x580+x)&8 ? 72 : pad)) {
+        cyc_mod_poke((uint16_t)(0x300+x),0); cyc_mod_poke((uint16_t)(0x4C0+x),0xFF); return 1;
+    }
+    if (dx >= 0 && dx < 256 && (!independent || in_views(ox,pad))) return 0;
+    if (!independent && (ox < s_win_left - OBJECT_PAD || ox >= s_win_right + OBJECT_PAD)) return 0;
 
     int shifted = ox - 128 < 0 ? 0 : ox - 128;
+    if (independent && !in_views(ox,pad)) {
+        int chosen = 0;
+        if (abs(ox-(s_rects.left[1]+128)) < abs(ox-(s_rects.left[0]+128))) chosen = 1;
+        shifted = s_rects.left[chosen]; /* native72px hysteresis without a drawn flag */
+    }
     /* The object's whole record: 24 arrays of 32 slots, $0300-$05FF. The
      * draw advances more than animation - e.g. the hit-flash timer in $04E0,
      * without which an enemy hit in the margin stayed invulnerable. */
@@ -365,6 +451,25 @@ static void draw_wide_sprites(uint32_t *out, int width, int play_x0, const uint8
     for (int i = s_wide_n[s_wide_shown]-1; i >= 0; i--) paint_wide_sprite(out,width,play_x0,opaque,&s_wide[s_wide_shown][i]);
 }
 
+static int rects_get(uint8_t *out, int cap)
+{
+    if (cap < (int)sizeof s_rects) return -1;
+    memcpy(s_rects.magic,"VR01",4); memcpy(out,&s_rects,sizeof s_rects); return sizeof s_rects;
+}
+static int rects_valid(const uint8_t *in, int size)
+{
+    if (!size) return 1;
+    ViewRects n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
+    if (memcmp(n.magic,"VR01",4) || n.count > 2 || n.reserved[0] || n.reserved[1] || n.reserved[2]) return 0;
+    for (int i = 0; i < n.count; i++) if (n.left[i] < 0 || n.right[i] > 65536 || n.left[i] >= n.right[i]) return 0;
+    for (int i = 0; i < 256; i++) if (n.seen[i] > 1) return 0;
+    return 1;
+}
+static int rects_set(const uint8_t *in, int size)
+{ if (!rects_valid(in,size)) return 0; if (size) memcpy(&s_rects,in,size); else memset(&s_rects,0,sizeof s_rects); return 1; }
+void mm3_ws_coop_reset(void)
+{ s_rects.count = 0; memset(s_rects.seen,0,sizeof s_rects.seen); s_win_valid = false; }
+
 #if defined(_MSC_VER)
 #pragma section(".CRT$XCU", read)
 static void __cdecl register_hooks(void);
@@ -380,10 +485,13 @@ static void register_hooks(void)
     if (!nes_mod_register_function_entry_plugin(HOOK_SPAWN, 0x9C11, spawn_edges) ||
         !nes_mod_register_function_entry_plugin(HOOK_DRAW, 0xF06B, object_draw) ||
         !nes_mod_register_function_entry_plugin(HOOK_NMI, 0xC000, nmi_latch) ||
-        !nes_mod_register_function_entry_plugin(HOOK_PASS, 0xF034, begin_pass))
+        !nes_mod_register_function_entry_plugin(HOOK_PASS, 0xF034, begin_pass) ||
+        !nes_mod_register_function_entry_plugin(HOOK_SPAWN_FILTER, 0x9C80, spawn_filter))
         fprintf(stderr, "[mm3 widescreen] cannot register hooks\n");
     nes_mod_register_savestate_hook("mm3.widescreen",wide_get,wide_set);
     nes_mod_register_savestate_validator("mm3.widescreen",wide_valid);
+    nes_mod_register_savestate_hook("mm3.view-rects",rects_get,rects_set);
+    nes_mod_register_savestate_validator("mm3.view-rects",rects_valid);
 }
 
 static void enable_hooks(bool on)
@@ -392,6 +500,7 @@ static void enable_hooks(bool on)
     nes_mod_set_function_hook_enabled(HOOK_DRAW, on);
     nes_mod_set_function_hook_enabled(HOOK_NMI, on);
     nes_mod_set_function_hook_enabled(HOOK_PASS, on);
+    nes_mod_set_function_hook_enabled(HOOK_SPAWN_FILTER, on && mm3_coop_independent());
     if (!on) s_win_valid = false;
 }
 
@@ -643,6 +752,7 @@ void mm3_ws_power_on(void)
     s_win_valid = false;
     s_wide_n[0] = s_wide_n[1] = 0;
     memset(s_wide,0,sizeof s_wide); s_wide_cur = 0; s_wide_shown = 1;
+    memset(&s_rects,0,sizeof s_rects);
     s_win_left = s_win_right = 0; s_restored = 0;
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
@@ -651,7 +761,7 @@ void mm3_ws_power_on(void)
 
 void mm3_ws_frame_end(void)
 {
-    if (s_mode == NES_VIDEO_STOCK) return;
+    if (s_mode == NES_VIDEO_STOCK && !mm3_coop_independent()) return;
     ensure_stage();
 }
 
@@ -661,7 +771,7 @@ void mm3_ws_state_loaded(void)
     s_stage = -1;
     s_win_valid = false;
     if (!s_restored) s_wide_n[0] = s_wide_n[1] = 0;
-    if (s_mode != NES_VIDEO_STOCK) ensure_stage();
+    if (s_mode != NES_VIDEO_STOCK || mm3_coop_independent()) ensure_stage();
     s_win_valid = restored_window; s_restored = 0;
 }
 
@@ -670,6 +780,7 @@ bool mm3_ws_set_mode(int mode)
     if (mode < NES_VIDEO_STOCK || mode >= NES_VIDEO_MODE_COUNT) return false;
     s_mode = mode;
     cyc_video_set_mode(mode);
+    if (mm3_coop_independent()) mm3_coop_view_policy();
     mm3_ws_refresh_policy();
     return true;
 }

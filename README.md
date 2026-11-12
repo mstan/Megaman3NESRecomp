@@ -222,3 +222,8 @@ route has been checked from native checkpoint retry through player-two damage,
 boss defeat, weapon award, password screen and entry into the next stage.
 This remains a development slice: boss/script and transition coverage, full
 lifecycle/camera behavior and online qualification are pending.
+The development `--coop-view split|p1|p2` profile now uses two fixed 256-pixel
+simulation rectangles. Native enemy construction, nearest-player targeting,
+respawn identity and the sixteen-enemy pool operate on their union, excluding
+the gap between distant players. These view modes produce the same simulation;
+their separate panel presentation is still under development.

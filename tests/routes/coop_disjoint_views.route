@@ -1,0 +1,44 @@
+# Fresh --coop on --coop-view split profile. Reach Snake Man through the
+# normal stage selector, retaining the local per-seat invulnerability fixture.
+# At7799 save a current-build state. Repeat its suffix in split, p1 and p2:
+# CPU/RAM/current state/PCM must match; presentation has separate acceptance.
+# Named personal pokes at7800 set both players x128/y180, HP28, inv127,
+# ground state, Buster, horizontal/vertical velocities0. At7802 put P2 at
+# world968/y180 facing left. These are position/precondition bypasses.
+# Expected authored union is [0,256] + [768,1024], with IDs5/6 only.
+# Gap IDs0..4 must stay absent; native constructor6 faces nearby P2.
+0 -
+6000 START
+6010 -
+6200 UP
+6210 -
+6400 START
+6410 -
+7300 1:RIGHT
+7300 2:RIGHT
+7400 1:RIGHT+A
+7400 2:RIGHT+A
+7440 1:RIGHT
+7440 2:RIGHT
+7600 1:RIGHT+DOWN+A
+7600 2:RIGHT+DOWN+A
+7601 1:RIGHT+DOWN
+7601 2:RIGHT+DOWN
+7630 1:RIGHT
+7630 2:RIGHT
+7750 1:-
+7750 2:-
+7800 1:-
+7800 2:-
+7802 POKE 310-31F 00
+7802 POKE 4D0-4DF FF
+7804 2:B
+7805 2:-
+# Do not set native collection/success flags. The real Buster kills Dada6.
+# It must stay dead while either view still includes its authored position.
+# Move P2 to384 at7902, then back968 at7904. Native constructors of the
+# intervening group reuse dead slot IDs, after which Dada6 can spawn again.
+# A separate pickup case creates native large-health routine64/OAMF9 at
+# P2's968/180 and HP10: only P2 heals to20 through the real refill loop.
+# Fill all sixteen world slots, then free31 and30: defer safely and construct
+# each eligible authored enemy once, preserving the other fourteen slots.

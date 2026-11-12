@@ -9,6 +9,7 @@
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "cyc_ring.h"
+#include "cyc_video.h"
 #include "logical_input.h"
 #include "mod_function_hooks.h"
 #include "mod_runtime.h"
@@ -65,7 +66,7 @@ typedef struct {
 static Transition T;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
-static int s_on, s_roster, s_inside, s_projectiles;
+static int s_on, s_roster, s_view, s_inside, s_projectiles;
 static unsigned s_count;
 static uint16_t s_address[PERSONAL], s_index[2048];
 static struct { uint32_t frame; uint16_t address; uint8_t seat, value; } s_pokes[32];
@@ -74,6 +75,13 @@ static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 2047]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
 int mm3_coop_enabled(void) { return s_on; }
 int mm3_coop_scene_active(void) { return s_on && C.initialized; }
+int mm3_coop_independent(void) { return s_on && s_view != 0; }
+int mm3_coop_view_mode(void) { return s_view; }
+void mm3_coop_view_policy(void)
+{
+    if (mm3_coop_independent()) cyc_video_request_width(s_view == 1 ? 512 : 256);
+    else cyc_video_set_mode(mm3_ws_mode());
+}
 int mm3_coop_seat(void) { return s_on ? C.current : 0; }
 int mm3_coop_character(int seat) { return s_roster ^ (seat & 1); }
 static void addresses(void)
@@ -102,6 +110,43 @@ int mm3_coop_read(int seat, unsigned a)
     return s_on && C.initialized && s_index[a] ? C.players[seat].ram[s_index[a] - 1] : ram(a);
 }
 static int alive(int seat) { return !(L.withdrawn & (1u << seat)) && (mm3_coop_read(seat, 0xA2) & 31) && mm3_coop_read(seat, 0x30) != 0x0E; }
+static int simulation_read(int seat, unsigned a)
+{ return seat == C.current ? ram(a) : mm3_coop_read(seat,a); }
+static int simulation_alive(int seat)
+{ return !(L.withdrawn & (1u<<seat)) && (simulation_read(seat,0xA2)&31) && simulation_read(seat,0x30) != 0x0E; }
+int mm3_coop_nearest(int x, int y)
+{
+    int chosen = C.anchor, best = 0x7FFFFFFF;
+    if (!s_on || !C.initialized) return chosen;
+    for (int seat = 0; seat < 2; seat++) if (simulation_alive(seat)) {
+        int distance = abs(x-simulation_read(seat,0x360)-simulation_read(seat,0x380)*256) + abs(y-simulation_read(seat,0x3C0));
+        if (distance < best) { best = distance; chosen = seat; }
+    }
+    return chosen;
+}
+int mm3_coop_spawn_project(int seat)
+{
+    if (!cyc_mod_isolated() || !s_on || !C.initialized || seat < 0 || seat > 1) return 0;
+    if (seat != C.current) project_combat(&C.players[seat]);
+    poke(0x27,ram(0x360)); return 1;
+}
+int mm3_coop_view_rects(int left[2])
+{
+    if (!mm3_coop_independent() || !C.initialized || C.stage != ram(0x22)) return 0;
+    int camera = ram(0xF9)*256+ram(0xFC), lo,hi;
+    int unlocked = !T.active && !ram(0x50) && (ram(0x2A)&0x20) && mm3_ws_room_limits(&lo,&hi);
+    for (int seat = 0; seat < 2; seat++) {
+        int who = simulation_alive(seat) ? seat : C.anchor;
+        left[seat] = camera;
+        if (unlocked) {
+            int x = simulation_read(who,0x360)+simulation_read(who,0x380)*256;
+            left[seat] = x-128;
+            if (left[seat] < lo) left[seat] = lo;
+            if (left[seat]+256 > hi) left[seat] = hi-256;
+        }
+    }
+    return 2;
+}
 static void follow_partner(void)
 {
     if (!T.active || !alive(C.anchor ^ 1)) return;
@@ -690,6 +735,7 @@ static int stage_entry(uint16_t address)
 {
     (void)address;
     if (s_on && !cyc_mod_isolated()) {
+        mm3_ws_coop_reset();
         C.anchor = C.current; C.initialized = C.ai = C.scope = C.draw = 0; T.active = T.priming = 0; mm3_coop_menu_cancel();
     }
     return 0;
@@ -708,7 +754,10 @@ static int scene_exit(uint16_t address)
 }
 static void enabled(int on)
 {
+    int old_independent = mm3_coop_independent();
     s_on = on != 0;
+    if (old_independent != mm3_coop_independent()) mm3_ws_coop_reset();
+    mm3_coop_view_policy();
     nes_mod_set_function_hook_enabled("mm3.coop.pool-end", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
@@ -746,6 +795,16 @@ bool mm3_coop_option(const char *name, const char *value)
         if (strcmp(value, "megaman") && strcmp(value, "protoman")) return false;
         s_roster = !strcmp(value, "protoman"); return true;
     }
+    if (!strcmp(name,"--coop-view")) {
+        int old_independent = mm3_coop_independent();
+        if (!strcmp(value,"shared")) s_view = 0;
+        else if (!strcmp(value,"split")) s_view = 1;
+        else if (!strcmp(value,"p1") || !strcmp(value,"player1")) s_view = 2;
+        else if (!strcmp(value,"p2") || !strcmp(value,"player2")) s_view = 3;
+        else return false;
+        if (old_independent != mm3_coop_independent()) mm3_ws_coop_reset();
+        mm3_coop_view_policy(); mm3_ws_refresh_policy(); return true;
+    }
     if (strcmp(name, "--coop") || (strcmp(value, "on") && strcmp(value, "off"))) return false;
     if (!strcmp(value, "on")) mm3_proto_option("--protoman", "on");
     enabled(!strcmp(value, "on")); return true;
@@ -753,14 +812,14 @@ bool mm3_coop_option(const char *name, const char *value)
 static int get(uint8_t *out, int cap)
 {
     if (cap < (int)sizeof C) return -1;
-    memcpy(C.magic, "CP02", 4); C.enabled = s_on; C.roster = s_roster;
+    memcpy(C.magic, "CP02", 4); C.enabled = s_on; C.roster = s_roster; C.reserved = (uint8_t)mm3_coop_independent();
     memcpy(out, &C, sizeof C); return sizeof C;
 }
 static int valid(const uint8_t *in, int size)
 {
     if (!size) return !s_on;
     Coop c; if (!in || size != (int)sizeof c) return 0; memcpy(&c, in, sizeof c);
-    if (memcmp(c.magic, "CP02", 4) || c.enabled != s_on || c.roster != s_roster ||
+    if (memcmp(c.magic, "CP02", 4) || c.enabled != s_on || c.roster != s_roster || c.reserved != mm3_coop_independent() ||
         c.initialized > 1 || c.anchor > 1 || c.current > 1 || c.scope > 2 || c.scope_owner > 1 || c.ai > 1 || c.ai_owner > 1 || c.draw > 1 || c.draw_owner > 1) return 0;
     for (int seat = 0; seat < 2; seat++) {
         if (c.players[seat].building.count > PARTS || c.players[seat].shown.count > PARTS) return 0;
@@ -820,7 +879,7 @@ static int transition_valid(const uint8_t *in, int size)
 }
 static int transition_set(const uint8_t *in, int size)
 { if (!transition_valid(in,size)) return 0; if (size) memcpy(&T,in,size); else memset(&T,0,sizeof T); return 1; }
-static void reset(void) { enabled(0); s_roster = 0; }
+static void reset(void) { enabled(0); s_roster = s_view = 0; }
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {

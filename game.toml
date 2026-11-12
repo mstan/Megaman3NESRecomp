@@ -705,6 +705,12 @@ end = 0xDF3A
 # $9C11 (bank $1A, inside check_new_enemies); $F06B is the per-object draw
 # that deletes a world object outside the 256 px screen.
 [[mod_function_hook]]
+id = "mm3.widescreen.spawn-filter"
+addr = 0x9C80
+bytes = "98 A2 1F DD C0 04 F0 F7"
+include_internal = true
+
+[[mod_function_hook]]
 id = "mm3.widescreen.spawn-edges"
 addr = 0x9C11
 bytes = "A5 2E 29 01 D0 38"

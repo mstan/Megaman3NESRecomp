@@ -218,6 +218,7 @@ const CycHostExtras *cyc_host_extras(void)
         {"--mm4-donor", true, "FILE: verified local Mega Man 4 (USA) source image"},
         {"--coop", true, "on|off: simultaneous native players (development)"},
         {"--coop-p1", true, "megaman|protoman: complementary co-op roster"},
+        {"--coop-view", true, "shared|split|p1|p2: co-op view"},
         {"--coop-test-poke", true, "FRAME:SEAT:HEXADDR:HEXVALUE: bounded personal QA precondition"}
     };
     static const CycHostExtras extras = {
