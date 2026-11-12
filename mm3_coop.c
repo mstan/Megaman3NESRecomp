@@ -74,15 +74,17 @@ static ExitWait E;
 /* Refight deaths create one return pod and one remnant in retail slots14/15. */
 typedef struct { char magic[4];uint8_t enabled,low,reserved[2]; } Refights;
 static Refights F;
-/* A foreign Jet is a platform only during the current native controller.
+/* A foreign helper is a platform only during the current native controller.
  * Its owner's original actor remains the sole AI, drawing and fuel owner. */
 typedef struct {
     char magic[4];
-    uint8_t enabled,active,slot,stack,seat,valid[2],reserved;
+    uint8_t enabled,active,slot,stack,seat,valid[2],ground;
     int16_t previous_x[2];
     uint8_t original[24];
 } HelperPlatform;
 static HelperPlatform H;
+static int s_coil_prefix,s_coil_stopped;
+static uint8_t s_coil_stack;
 static uint8_t s_checkpoints[23][8];
 static int s_checkpoint_tables;
 static int s_on, s_roster, s_view, s_wait_both, s_inside, s_projectiles;
@@ -157,20 +159,23 @@ static int alive(int seat) { return !(E.waiting & (1u<<seat)) && available(seat)
 static void helper_begin(unsigned stack)
 {
     if (H.active || !s_on || !C.initialized || T.active || ram(0x30)>1 || L.teleport[C.current]) return;
-    if (ram(0xA0)==11 && (ram(0x301)&0x80) && ram(0x5C1)==0xD7 && ram(0x5D)==1) return;
+    if ((ram(0xA0)==11 || ram(0xA0)==7) && (ram(0x301)&0x80) &&
+        (ram(0x5C1)==0xD7 || ram(0x5C1)==0xD8) && ram(0x5D)==1) return;
     int owner=C.current^1;
-    if (!alive(owner) || mm3_coop_read(owner,0xA0)!=11 || !(mm3_coop_read(owner,0x301)&0x80) ||
-        mm3_coop_read(owner,0x5C1)!=0xD7 || !(mm3_coop_read(owner,0x581)&0x80) || (mm3_coop_read(owner,0x581)&4)) {
+    int weapon=mm3_coop_read(owner,0xA0),coil=weapon==7;
+    if (!alive(owner) || (weapon!=11 && !coil) || !(mm3_coop_read(owner,0x301)&0x80) ||
+        mm3_coop_read(owner,0x5C1)!=(coil?0xD8:0xD7) || !(mm3_coop_read(owner,0x581)&0x80) || (mm3_coop_read(owner,0x581)&4) ||
+        (coil && (mm3_coop_read(owner,0x5A1) || !(mm3_coop_read(owner,0x581)&1)))) {
         H.valid[owner]=0;return;
     }
     int x=mm3_coop_read(owner,0x361)+256*mm3_coop_read(owner,0x381);
-    int delta=H.valid[owner] ? x-H.previous_x[owner] : 0;
+    int delta=!coil && H.valid[owner] ? x-H.previous_x[owner] : 0;
     H.previous_x[owner]=(int16_t)x;H.valid[owner]=1;
     if (delta < -8 || delta > 8) delta=0; /* A warp is not platform velocity. */
     int slot;
     for (slot=13;slot>=5;slot--) if (!(ram(0x300+slot)&0x80)) break;
     if (slot<5) return;
-    H.slot=(uint8_t)slot;H.stack=(uint8_t)stack;H.seat=C.current;H.active=1;
+    H.slot=(uint8_t)slot;H.stack=(uint8_t)stack;H.seat=C.current;H.ground=(uint8_t)!ram(0x30);H.active=1;
     for (int f=0;f<24;f++) {
         H.original[f]=ram(0x300+f*32+slot);
         poke(0x300+f*32+slot,mm3_coop_read(owner,0x301+f*32));
@@ -187,7 +192,47 @@ static void helper_end(void)
     unsigned slot=H.slot;
     H.active=0;
     for (int f=0;f<24;f++) poke(0x300+f*32+slot,H.original[f]);
-    H.slot=H.stack=H.seat=0;memset(H.original,0,sizeof H.original);
+    H.slot=H.stack=H.seat=H.ground=0;memset(H.original,0,sizeof H.original);
+}
+static int helper_coil_ready(void)
+{
+    int owner=C.current^1;
+    return H.active && H.ground && ram(0x30)==0 && ram(0x5D)==H.slot &&
+        mm3_coop_read(owner,0xA0)==7 && (mm3_coop_read(owner,0x301)&0x80) &&
+        mm3_coop_read(owner,0x5C1)==0xD8 && !mm3_coop_read(owner,0x5A1);
+}
+static int coil_prefix_end(uint16_t address)
+{
+    (void)address;
+    if (!s_coil_prefix || !cyc_mod_isolated()) return 0;
+    CycModRegs r={0};cyc_mod_regs(&r);
+    unsigned caller=ram(0x100|((r.s+1)&255))|(ram(0x100|((r.s+2)&255))<<8);
+    if ((uint8_t)(r.s+2)!=s_coil_stack || caller!=0xCE84) return 0;
+    /* End only this private prefix, before its ammo/physics tail. The real
+     * machine's stack is isolated; the two original native tails run below. */
+    r.s=(uint8_t)(r.s+2);cyc_mod_set_regs(&r);s_coil_stopped=1;return 1;
+}
+static int helper_coil_native(CycModRegs *r)
+{
+    if (!helper_coil_ready()) return 1;
+    int owner=C.current^1;
+    uint8_t original[24],spring[24],weapon=ram(0xA0),ammo=ram(0xA9),usage=ram(0xB5);
+    for(int f=0;f<24;f++) {original[f]=ram(0x301+f*32);poke(0x301+f*32,mm3_coop_read(owner,0x301+f*32));}
+    r->x=0;s_coil_stack=(uint8_t)(r->s-2);s_coil_prefix=1;s_coil_stopped=0;
+    int ok=cyc_mod_call(0xCE61,r) && s_coil_stopped;s_coil_prefix=0;
+    for(int f=0;f<24;f++){spring[f]=ram(0x301+f*32);poke(0x301+f*32,original[f]);}
+    uint8_t cost=0,next_usage=0;
+    if(ok) {
+        poke(0xA0,7);poke(0xA9,mm3_coop_read(owner,0xA9));poke(0xB5,mm3_coop_read(owner,0xB5));
+        ok=cyc_mod_call(0xDED8,r);cost=ram(0xA9);next_usage=ram(0xB5);
+    }
+    poke(0xA0,weapon);poke(0xA9,ammo);poke(0xB5,usage);
+    if(ok) ok=cyc_mod_call(0xD007,r);
+    if(ok) {
+        for(int f=0;f<24;f++)C.players[owner].ram[s_index[0x301+f*32]-1]=spring[f];
+        C.players[owner].ram[s_index[0xA9]-1]=cost;C.players[owner].ram[s_index[0xB5]-1]=next_usage;
+    }
+    return ok;
 }
 static int simulation_read(int seat, unsigned a)
 { return seat == C.current ? ram(a) : mm3_coop_read(seat,a); }
@@ -485,7 +530,7 @@ static int isolated_hooks(int enabled)
         for (int i = 0; i < count; i++) {
             Hook *h = &s_hooks[i]; nes_mod_function_hook_at(i, &h->id, NULL, &h->enabled, NULL);
             int personal = !strcmp(h->id, "mm3.proto.muzzle") || !strcmp(h->id, "mm3.proto.shots") ||
-                !strcmp(h->id, "mm3.coop.pool-end") || !strcmp(h->id, "mm3.coop.death-music") ||
+                !strcmp(h->id, "mm3.coop.pool-end") || !strcmp(h->id, "mm3.coop.death-music") || !strcmp(h->id,"mm3.coop.coil-prefix-end") ||
                 !strncmp(h->id,"mm3.world.",10) ||
                 (s_inside == 2 && (!strcmp(h->id, "mm3.proto.pose") || !strcmp(h->id, "mm3.proto.part") || !strcmp(h->id, "mm3.proto.pose-done")));
             if (h->enabled && !personal) nes_mod_set_function_hook_enabled(h->id, 0);
@@ -514,7 +559,8 @@ static int native_call(uint16_t routine, CycModRegs *r, int pool)
         ok = cyc_mod_call(0xFF6B, r);
     }
     if (ok && routine==0xCD34) helper_begin(0);
-    if (ok) { s_projectiles = pool; ok = cyc_mod_call(routine, r); s_projectiles = 0; }
+    if (ok) { s_projectiles = pool; ok = routine==0xCE61?helper_coil_native(r):cyc_mod_call(routine, r);s_projectiles = 0; }
+    if (ok && routine==0xCD34 && helper_coil_ready()) ok=helper_coil_native(r);
     if (routine==0xCD34) helper_end();
     if (ok) {
         for(int f=0;f<24;f++)for(int slot=16;slot<32;slot++)world[f][slot-16]=ram(0x300+f*32+slot);
@@ -884,7 +930,10 @@ static void after_return(void)
 {
     if (!s_on || cyc_mod_isolated()) return;
     CycModRegs r = {0}; cyc_mod_regs(&r);
-    if (H.active && r.s==(uint8_t)(H.stack+2)) helper_end();
+    if (H.active && r.s==(uint8_t)(H.stack+2)) {
+        if(helper_coil_ready()){CycModRegs coil=r;if(!native_call(0xCE61,&coil,0))C.failures++;}
+        helper_end();
+    }
     if (C.initialized && !s_inside && !C.scope && !C.ai) reserve_refight_effects();
     if (C.initialized && !s_inside && !C.scope && !C.ai && !T.active && ram(0x22) == 15 && ram(0x30) == 0x11)
         paired_script(3);
@@ -1110,6 +1159,7 @@ static void enabled(int on)
     if (old_independent != mm3_coop_independent()) mm3_ws_coop_reset();
     mm3_coop_view_policy();
     nes_mod_set_function_hook_enabled("mm3.coop.pool-end", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.coil-prefix-end",s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.hard-slam", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.hard-dive", s_on);
@@ -1269,7 +1319,7 @@ static int helper_valid(const uint8_t *in,int size)
     if (!size) return 1;
     HelperPlatform n;if (!in || size!=(int)sizeof n) return 0;memcpy(&n,in,size);
     return !memcmp(n.magic,"HP01",4) && n.enabled==s_on && n.active<=1 && n.seat<2 &&
-        n.valid[0]<=1 && n.valid[1]<=1 && !n.reserved &&
+        n.valid[0]<=1 && n.valid[1]<=1 && n.ground<=1 && (!n.ground || n.active) &&
         (!n.active || (n.enabled && n.slot>=5 && n.slot<=13));
 }
 static int helper_set(const uint8_t *in,int size)
@@ -1324,6 +1374,7 @@ void mm3_coop_tcp_setup(void)
 NES_MOD_CONSTRUCTOR(register_mm3_coop)
 {
     nes_mod_register_function_entry_plugin("mm3.coop.pool-end", 0x8014, pool_boundary);
+    nes_mod_register_function_entry_plugin("mm3.coop.coil-prefix-end",0xDED8,coil_prefix_end);
     nes_mod_register_function_entry_plugin("mm3.coop.enemy-done", 0x808B, enemy_done);
     nes_mod_register_function_entry_plugin("mm3.coop.hard-slam", 0xA0F7, hard_man_effect);
     nes_mod_register_function_entry_plugin("mm3.coop.hard-dive", 0xA157, hard_man_effect);

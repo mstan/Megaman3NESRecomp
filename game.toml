@@ -4370,3 +4370,9 @@ bank29 = [
     0xBED2,
 ]
 
+
+[[mod_function_hook]]
+id = "mm3.coop.coil-prefix-end"
+addr = 0xDED8
+length = 8
+crc32 = 0x5864847B
