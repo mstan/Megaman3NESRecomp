@@ -106,6 +106,9 @@ static void addresses(void)
     for (unsigned i = 1; i <= 3; i++) {
         s_address[s_count++] = (uint16_t)(0x610 + i); s_address[s_count++] = (uint16_t)(0x630 + i);
     }
+    /* Native Spark Shock associates each of its two personal projectiles
+     * with a shared target slot. Append the fields to the existing domain. */
+    s_address[s_count++] = 0x5B;s_address[s_count++] = 0x5C;
     for (unsigned i = 0; i < s_count; i++) s_index[s_address[i]] = (uint16_t)(i + 1);
 }
 static void capture(Player *p) { for (unsigned i = 0; i < s_count; i++) p->ram[i] = ram(s_address[i]); }
@@ -196,7 +199,7 @@ static void victory_follow(void)
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
         for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
-        poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
+        poke(0x5B,0);poke(0x5C,0);poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
     }
     C.current = C.anchor; project(&C.players[C.anchor]); T.active = 2; T.priming = 0;
     follow_partner();
@@ -271,7 +274,7 @@ static void wait_hide(int seat,int direction,int camera)
     C.current = (uint8_t)seat;project(&C.players[seat]);mm3_charge_cancel();
     E.flag[seat] = ram(0x300);E.direction[seat] = (uint8_t)direction;E.page[seat] = (uint8_t)(camera>>8);
     for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
-    poke(0x300,0);poke(0x32,0);poke(0xB5,0);capture(&C.players[seat]);
+    poke(0x5B,0);poke(0x5C,0);poke(0x300,0);poke(0x32,0);poke(0xB5,0);capture(&C.players[seat]);
     E.waiting |= (uint8_t)(1u<<seat);
     C.current = (uint8_t)previous;project(&C.players[previous]);
 }
@@ -329,7 +332,7 @@ static int transition_begin(uint16_t address)
     for (int seat = 0; seat < 2; seat++) {
         C.current = (uint8_t)seat; project(&C.players[seat]); mm3_charge_cancel();
         for (int slot = 1; slot < 16; slot++) poke(0x300+slot,0);
-        poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
+        poke(0x5B,0);poke(0x5C,0);poke(0x32,0); poke(0xB5,0); capture(&C.players[seat]);
     }
     C.current = C.anchor; project(&C.players[C.anchor]);
     T.active = 1; T.priming = 1; T.entry = address; T.stack = r.s; T.original = r;
@@ -473,13 +476,17 @@ static int pool_boundary(uint16_t address)
     /* At this top-level loop edge every personal AI invocation has returned.
      * Its original JSR is the next stack frame, so RTS ends only this pool. */
     if (s_projectiles) return r.x >= 16;
-    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || r.x < 16 || r.x >= 32 ||
-        !(ram(0x300 + r.x) & 0x80) || ram(0x320 + r.x) >= 0xA0) return 0;
+    if (!s_on || !C.initialized || s_inside || C.scope || C.ai || cyc_mod_isolated() || r.x < 16 || r.x >= 32) return 0;
+    int freezer = -1;
+    for (int seat = 0; seat < 2; seat++) if (simulation_read(seat,0x5B) == r.x || simulation_read(seat,0x5C) == r.x) {
+        freezer = seat;break;
+    }
+    if (freezer < 0 && (!(ram(0x300+r.x)&0x80) || ram(0x320+r.x) >= 0xA0)) return 0;
     unsigned routine = ram(0x320+r.x);
     /* These actors start the one shared HP-bar script on the native anchor.
      * A nearest-player projection would put that script in an isolated guest
      * controller, where its global fill writes are intentionally discarded. */
-    if ((routine >= 0x58 && routine <= 0x5F) || (routine >= 0x90 && routine <= 0x97)) return 0;
+    if (freezer < 0 && ((routine >= 0x58 && routine <= 0x5F) || (routine >= 0x90 && routine <= 0x97))) return 0;
     capture_combat(&C.players[C.current]);
     int target_x = ram(0x360 + r.x) + ram(0x380 + r.x) * 256, target_y = ram(0x3C0 + r.x);
     int chosen = C.current, best = 0x7FFFFFFF;
@@ -488,7 +495,8 @@ static int pool_boundary(uint16_t address)
             abs(target_y - mm3_coop_read(seat, 0x3C0));
         if (distance < best) { best = distance; chosen = seat; }
     }
-    C.ai = 1; C.ai_owner = C.current; C.ai_stack = r.s; C.ai_x = ram(0x27);
+    if (freezer >= 0) chosen = freezer;
+    C.ai = freezer >= 0 ? 2 : 1; C.ai_owner = C.current; C.ai_stack = r.s; C.ai_x = ram(0x27);
     C.current = (uint8_t)chosen; project_combat(&C.players[chosen]); poke(0x27, ram(0x360));
     return 0;
 }
@@ -584,6 +592,14 @@ static void collision(int kind, unsigned entry)
             for (unsigned i = 0; i < sizeof script / sizeof *script; i++) poke(script[i],mm3_coop_read(guest,script[i]));
             victory_follow();
         }
+        if (kind == 2 && C.ai == 2 && C.original.pc == 0x8083 && !(ram(0x4E0+C.original.x)&31)) {
+            /* A partner's real native hit killed the frozen target. Release
+             * only the shocks bound to it, so its native death AI can run. */
+            for (int seat = 0; seat < 2; seat++) for (int slot = 1; slot <= 2; slot++)
+                if (mm3_coop_read(seat,0x5A+slot) == C.original.x) {
+                    personal_write(seat,0x5A+slot,0);personal_write(seat,0x300+slot,0);
+                }
+        }
         for (unsigned i = 0; i < sizeof C.scratch; i++) poke(i, C.scratch[i]);
         cyc_mod_set_regs(&C.original); C.scope = 0; return;
     }
@@ -605,6 +621,25 @@ static void collision(int kind, unsigned entry)
 }
 void mm3_coop_contact(void) { collision(1, 0x8097); }
 void mm3_coop_weapon_hit(void) { collision(2, 0x8102); }
+static int frozen_weapon_hit(uint16_t address)
+{
+    if (!s_on || !C.initialized || s_inside || cyc_mod_isolated() || C.ai != 2) return 0;
+    CycModRegs r = {0};cyc_mod_regs(&r);
+    if (C.scope) {
+        if (C.scope == 2 && C.original.pc == address && r.s == C.original.s) collision(2,address);
+        return 0;
+    }
+    if (r.s < 4 || !alive(C.current^1)) return 0;
+    /* The cartridge's frozen-actor branch omits ordinary weapon damage.
+     * Keep its native Spark recheck, then run the partner's original damage
+     * call on the real clock, returning to this exact contact boundary. */
+    collision(2,address);
+    if (C.scope != 2) return 0;
+    cyc_mod_regs(&r);
+    unsigned target = 0x8102-1;
+    poke(0x100+r.s,target>>8);r.s--;poke(0x100+r.s,target);r.s--;
+    cyc_mod_set_regs(&r);return 1;
+}
 void mm3_coop_input(uint8_t buttons[2])
 {
     /* MM3 stores A at bit7 and Right at bit0, exactly the host seat format. */
@@ -649,6 +684,7 @@ static void transport(int seat, int arrival, int x, int y, int heal)
         poke(0x3C,0); poke(0x3F,0);
     }
     for (int slot = 1; slot < 16; slot++) poke(0x300 + slot,0);
+    poke(0x5B,0);poke(0x5C,0);
     poke(0x32,0); poke(0x33,0); poke(0x36,0); poke(0x37,0); poke(0x38,0);
     poke(0x3D,0); poke(0xB5,0); poke(0x39,2); poke(0x500,0);
     poke(0x5C0,0x13); poke(0x5E0,0); poke(0x440,0xFF); poke(0x460,0xFF);
@@ -959,6 +995,7 @@ static void enabled(int on)
     mm3_coop_view_policy();
     nes_mod_set_function_hook_enabled("mm3.coop.pool-end", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.enemy-done", s_on);
+    nes_mod_set_function_hook_enabled("mm3.coop.frozen-hit", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.death-music", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.stage-entry", s_on);
     nes_mod_set_function_hook_enabled("mm3.coop.retry-entry", s_on);
@@ -1025,7 +1062,7 @@ static int valid(const uint8_t *in, int size)
     if (!size) return !s_on;
     Coop c; if (!in || size != (int)sizeof c) return 0; memcpy(&c, in, sizeof c);
     if (memcmp(c.magic, "CP02", 4) || c.enabled != s_on || c.roster != s_roster || c.reserved != mm3_coop_independent() ||
-        c.initialized > 1 || c.anchor > 1 || c.current > 1 || c.scope > 2 || c.scope_owner > 1 || c.ai > 1 || c.ai_owner > 1 || c.draw > 1 || c.draw_owner > 1) return 0;
+        c.initialized > 1 || c.anchor > 1 || c.current > 1 || c.scope > 2 || c.scope_owner > 1 || c.ai > 2 || c.ai_owner > 1 || c.draw > 1 || c.draw_owner > 1) return 0;
     for (int seat = 0; seat < 2; seat++) {
         if (c.players[seat].building.count > PARTS || c.players[seat].shown.count > PARTS) return 0;
         const Picture *frames[] = {&c.players[seat].building, &c.players[seat].shown};
@@ -1125,6 +1162,7 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
 {
     nes_mod_register_function_entry_plugin("mm3.coop.pool-end", 0x8014, pool_boundary);
     nes_mod_register_function_entry_plugin("mm3.coop.enemy-done", 0x808B, enemy_done);
+    nes_mod_register_function_entry_plugin("mm3.coop.frozen-hit", 0x8083, frozen_weapon_hit);
     nes_mod_register_function_entry_plugin("mm3.coop.death-music", 0xF89A, death_music);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-entry", 0xC9B3, stage_entry);
     nes_mod_register_function_entry_plugin("mm3.coop.retry-entry", 0xCC18, retry_entry);

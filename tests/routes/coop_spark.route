@@ -1,0 +1,22 @@
+# Current-build prerequisite: Snake Man co-op gameplay, frame7799.
+# --coop on --charge off --widescreen off
+# Use --coop-test-poke to give P2 Spark Shock8/energy28 at world220/y100,
+# air1, yscreen0, zero Y velocity, facing1. P1 starts160/y180 with Buster.
+# Both have native contact protection to isolate the weapon interaction.
+# Create Dada in world slot31 from its real global-ID00 properties: active80,
+# routine02, hitboxC1, drawflags90, animation21, HP1, x248/y100, other fields0.
+# This positions an actual native AI/collision target; it does not qualify
+# its constructor or traversal. Do not assign freeze, damage or death results.
+# The real Spark damage-table58 hit must bind P2's shot to enemy31 and hold it.
+# Bring P1 closer at7810: P2's freeze must remain. Repeat P1 L/R equipment.
+# P2's own L/R change must release its effect; native expiry must also release.
+# For the kill case, move P1 to200/y100, air1/facing1/zero Y velocity at7804,
+# then use the Buster input below. The original8102 collision/damage/death
+# must kill the frozen enemy and clear only the bound shocks.
+# Repeat with player roles exchanged. Native/interpreter and a cold snapshot
+# at7805 (real shock plus approaching Buster) must match state, pixels and PCM.
+7800 1:-
+7800 2:B
+7801 2:-
+7804 1:B
+7805 1:-

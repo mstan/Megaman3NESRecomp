@@ -199,8 +199,10 @@ characters (`--coop-p1 megaman|protoman`), separate native player/Rush/projectil
 state, independent L/R equipment selection and current-build save/load. Player
 two's controls are kept separate from the retail cartridge's debug controls.
 Ordinary enemies and pickups use the nearer living player. A survivor retains
-control and stage music; a team wipe uses the native shared-life retry. Native
-health and ammo refills keep their recipient's inventory and drawing context.
+control and stage music; a team wipe uses the native shared-life retry.
+Spark Shock keeps its projectile owner when the partner approaches or changes
+equipment, and the partner can damage frozen enemies with their own weapon.
+Native health and ammo refills keep their recipient's inventory and drawing context.
 Start pauses the world. Shared view shows the pausing player's native inventory
 and accepts that player's choices. Separate views show each player's own usable
 inventory panel; the player who opened the menu confirms resume with Start. Energy Tanks use one

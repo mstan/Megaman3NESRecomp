@@ -745,6 +745,13 @@ id = "mm3.widescreen.nmi"
 addr = 0xC000
 bytes = "08 48 8A 48 98 48 AD 02 20"
 
+# Native Spark-freeze branch rejoins contact processing here.
+[[mod_function_hook]]
+id = "mm3.coop.frozen-hit"
+addr = 0x8083
+bytes = "BD 80 04 10 03 20 97 80"
+include_internal = true
+
 # Native player controller entry, after gameplay has restored the stage bank.
 [[mod_function_hook]]
 id = "mm3.enhancement.player-dispatch"
