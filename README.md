@@ -74,6 +74,36 @@ branch previews; no merge or release has been performed. Desktop Windows checks 
 menu/input/save-state behavior; other platforms and full-game completion have
 not been validated by this migration.
 
+## Character and co-op feature branch
+
+Enable **Proto Man** in Mods for Select character exchange, the airborne front
+shield, double incoming damage and two uncharged shots. Its default behavior
+uses those traits; the reskin option retains Mega Man behavior. Native sliding
+remains available to both characters. Optional **Charged Mega Buster** adds
+verified MM4 half/full shots and sound; provide your own MM4 USA source through
+the mod's resource setting. Source images and extracted game data are not
+included in releases.
+
+**Co-op** is optional and enables the Proto Man dependency automatically. Each
+player keeps personal health, weapons and ammo. Start opens the native inventory;
+a shared screen shows the pauser's panel, and independent views show each
+player's panel. Hold Select for 90 gameplay updates to withdraw, then release
+and press again on safe ground to rejoin. The survivor continues after a death;
+a team wipe spends one shared life. Room exits can follow the first player or
+wait for both. The runtime Display page selects Shared, Split, P1 or P2 views.
+Adaptive Fit is the fresh-profile aspect default.
+
+Rollback netplay seals the host's gameplay settings, roster, timing, simulation
+width and required source identities before gameplay. Use the same game build
+and ROM; a charge-enabled match requires the verified local source at each peer.
+Independent Split/P1/P2 presentation can change locally during a match. Shared
+matches retain the agreed host logical width. Other gameplay settings stay
+locked until leaving, which restores local preferences. `tests/NETPLAY.md`
+describes the controller-only network regression route.
+
+These features have targeted Windows native/interpreter, current-state, visual
+and delayed-input network checks. Full-game content, other platforms and release
+integration remain under validation; this branch is not a completed release.
 ## What Works
 
 - Title screen

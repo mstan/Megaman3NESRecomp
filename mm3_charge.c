@@ -5,6 +5,7 @@
 #include "mm3_proto.h"
 #include "mm3_coop.h"
 #include "mm3_widescreen.h"
+#include "mm3_net.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
@@ -14,6 +15,9 @@
 #include "mod_function_hooks.h"
 #include "mod_runtime.h"
 #include "mod_savestate.h"
+#ifdef NESRECOMP_NET
+#include "nes_netplay_identity.h"
+#endif
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -47,6 +51,29 @@ static const uint8_t s_normal[3] = {0x0F, 0x2C, 0x11}; /* native USA menu, bank0
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 0x7FF]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
 int mm3_charge_available(void) { return s_on; }
+int mm3_charge_requested(void) { return s_requested; }
+int mm3_charge_sound(void) { return s_sound; }
+int mm3_charge_flash(void) { return s_flash_enabled; }
+static const char *donor_path(void)
+{
+    if (s_donor_path[0]) return s_donor_path;
+    const char *path=nes_mod_external_rom_path("mega-man-3-usa.backport.mm4","charge","mm4-usa");
+#ifdef NESRECOMP_NET
+    /* Netplay clears the active offline mod plan. Revalidate the selected
+     * local resource through its dedicated pre-boot source API instead. */
+    if (!path || !*path) path=nes_mod_netplay_external_rom_path("mega-man-3-usa.backport.mm4","charge","mm4-usa");
+#endif
+    return path;
+}
+int mm3_charge_source_hash(uint8_t out[32])
+{
+#ifdef NESRECOMP_NET
+    char why[160];if (!cyc_mm4_donor_load(donor_path(),why,sizeof why)) return 0;
+    nes_sha256(cyc_mm4_donor.prg,CYC_MM4_PAYLOAD_SIZE,out);return 1;
+#else
+    (void)out;return 0;
+#endif
+}
 int mm3_charge_counter(void) { return s_on ? C.counter : 0; }
 static int load_art(void) { return cyc_mm4_charge_data_load(&s_data); }
 static void palette(int counter)
@@ -267,15 +294,16 @@ static int set_enabled(int requested, const char *path)
     nes_mod_set_function_hook_enabled("mm3.charge.damage", s_on);
     nes_mod_set_function_hook_enabled("mm3.charge.pierce", s_on);
     mm3_mods_refresh_hooks(); mm3_proto_refresh_hooks(); mm3_ws_refresh_policy();
-    nes_mod_set_local_only("Mega Man 3 charged Mega Buster", s_on);
+    nes_mod_set_local_only("Mega Man 3 charged Mega Buster", s_on && !mm3_net_available());
     return 1;
 }
-void mm3_charge_power_on(void) { memset(s_states, 0, sizeof s_states); if (s_requested) set_enabled(1, s_donor_path[0] ? s_donor_path : nes_mod_external_rom_path("mega-man-3-usa.backport.mm4", "charge", "mm4-usa")); }
+void mm3_charge_power_on(void) { memset(s_states, 0, sizeof s_states); if (s_requested) set_enabled(1, donor_path()); }
 void mm3_charge_new_team(void) { memset(s_states, 0, sizeof s_states); if (s_on) cyc_mm4_audio_reset(); }
 void mm3_charge_frame_end(void) { if (s_on) cyc_mm4_audio_frame_end(); }
 void mm3_charge_audio_mix(int16_t *out, size_t n) { if (s_on) cyc_mm4_audio_mix(out, n); }
 bool mm3_charge_option(const char *name, const char *value)
 {
+    if (mm3_net_locked()) return false;
     if (!strcmp(name, "--mm4-donor")) { if (strlen(value) >= sizeof s_donor_path) return false; strcpy(s_donor_path, value); return !s_requested || set_enabled(1, value); }
     if (strcmp(name, "--charge")) return false;
     if (strcmp(value, "on") && strcmp(value, "off")) return false;
@@ -284,12 +312,21 @@ bool mm3_charge_option(const char *name, const char *value)
     if (!s_donor_path[0]) return true;
     return set_enabled(1, s_donor_path);
 }
-static void reset(void) { set_enabled(0, NULL); s_donor_path[0] = 0; s_sound = s_flash_enabled = 1; }
+int mm3_charge_configure(int enabled,int sound,int flash)
+{
+    if (mm3_net_locked()) return 0;
+    int old_sound=s_sound,old_flash=s_flash_enabled;
+    s_sound=sound;s_flash_enabled=flash;
+    if (set_enabled(enabled,enabled?donor_path():NULL)) return 1;
+    s_sound=old_sound;s_flash_enabled=old_flash;return 0;
+}
+static void reset(void) { if (!mm3_net_locked()) { set_enabled(0, NULL); s_donor_path[0] = 0; s_sound = s_flash_enabled = 1; } }
 static void activate(void)
 {
+    if (mm3_net_locked()) return;
     s_sound = nes_mod_get_option_int("mega-man-3-usa.backport.mm4", "charge", "sound", 1);
     s_flash_enabled = nes_mod_get_option_int("mega-man-3-usa.backport.mm4", "charge", "flash", 1);
-    set_enabled(1, nes_mod_external_rom_path("mega-man-3-usa.backport.mm4", "charge", "mm4-usa"));
+    set_enabled(1, donor_path());
 }
 static int state_get(uint8_t *out, int capacity)
 {

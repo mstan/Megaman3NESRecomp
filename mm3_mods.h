@@ -12,3 +12,4 @@ void mm3_mods_tcp_setup(void);
 void mm3_mods_refresh_hooks(void);
 void mm3_mods_personal_dispatch(void);
 int mm3_mods_equip(int weapon, int announce);
+int mm3_weapons_enabled(void);

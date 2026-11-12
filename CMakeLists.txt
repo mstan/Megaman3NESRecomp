@@ -43,18 +43,27 @@ if(NESRECOMP_BACKEND STREQUAL "cycle")
         RECOMPILER "${NESRECOMP_HOST_COMPILER}"
         SEED_FILE "${NESRECOMP_CYCLE_SEEDS}"
         GAME_ID "mega-man-3-usa"
-        PLAYERS 1
+        PLAYERS 2
         MODS
         HOST_EXTRAS "${CMAKE_CURRENT_SOURCE_DIR}/cycle_extras.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_widescreen.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_mods.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_proto.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_charge.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_coop.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/mm3_coop_menu.c" "${CMAKE_CURRENT_SOURCE_DIR}/mm3_world.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/mm3_net.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_charge_data.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_donor.c"
             "${NESRECOMP_ROOT}/runner/cyc/cyc_mm4_audio.c"
         BOXART "${CMAKE_CURRENT_SOURCE_DIR}/boxart.tga")
     target_include_directories(MegaMan3Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")
+    option(MM3_ENABLE_NETPLAY "Build shared rollback netplay and lobby" ON)
+    option(MM3_NETPLAY_QUALIFIED "Enable the qualified MM3 simulation profile" ON)
+    if(MM3_ENABLE_NETPLAY OR NESRECOMP_ENABLE_NET)
+        nesrecomp_enable_recomp_net(MegaMan3Recomp)
+        if(MM3_NETPLAY_QUALIFIED)
+            target_compile_definitions(MegaMan3Recomp PRIVATE MM3_NETPLAY_QUALIFIED=1)
+        endif()
+    endif()
     add_custom_command(TARGET MegaMan3Recomp POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded" "$<TARGET_FILE_DIR:MegaMan3Recomp>/mods")

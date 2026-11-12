@@ -1,0 +1,81 @@
+format_version = 1
+id = "mega-man-3-usa.coop"
+version = "1.0.0"
+name = "Co-op"
+author = "NESRecomp"
+description = "Play together as Mega Man and Proto Man with personal health, weapons and inventories. Proto Man artwork and character support are included."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+[[target]]
+game_id = "mega-man-3-usa"
+rom_crc32 = "603aaa57"
+[[feature]]
+id = "coop"
+name = "Co-op"
+group = "Gameplay"
+description = "Two simultaneous players. Assign controls in Controls. Hold Select to withdraw; release and press again on safe ground to rejoin."
+default_enabled = false
+experimental = true
+requires = ["mega-man-3-usa.character.protoman/protoman"]
+[[plugin]]
+feature = "coop"
+id = "mega-man-3-usa.coop"
+[[option]]
+feature = "coop"
+id = "coop-view"
+label = "Two-player view"
+type = "choice"
+default = "shared"
+[[option.choice]]
+value = "shared"
+label = "Shared screen"
+[[option.choice]]
+value = "split"
+label = "Independent split screen"
+[[option.choice]]
+value = "p1"
+label = "Independent: player one"
+[[option.choice]]
+value = "p2"
+label = "Independent: player two"
+[[option]]
+feature = "coop"
+id = "player-one"
+label = "Player one character"
+type = "choice"
+default = "megaman"
+[[option.choice]]
+value = "megaman"
+label = "Mega Man"
+[[option.choice]]
+value = "protoman"
+label = "Proto Man"
+[[option]]
+feature = "coop"
+id = "wait-both"
+label = "Wait for both at room exits"
+type = "choice"
+default = "off"
+[[option.choice]]
+value = "off"
+label = "Follow the first player"
+[[option.choice]]
+value = "on"
+label = "Both players meet at the exit"
+[[option]]
+feature = "coop"
+id = "online-input"
+label = "Online controls"
+description = "Choose a local binding row before joining. The default follows your occupied room seat."
+type = "choice"
+default = "seat"
+[[option.choice]]
+value = "seat"
+label = "My seat's bindings"
+[[option.choice]]
+value = "device1"
+label = "Player 1 bindings"
+[[option.choice]]
+value = "device2"
+label = "Player 2 bindings"

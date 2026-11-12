@@ -6,6 +6,7 @@
 #include "mm3_widescreen.h"
 #include "mm3_coop_menu.h"
 #include "mm3_world.h"
+#include "mm3_net.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
@@ -77,6 +78,7 @@ static unsigned s_count;
 static uint16_t s_address[PERSONAL], s_index[2048];
 static struct { uint32_t frame; uint16_t address; uint8_t seat, value; } s_pokes[32];
 static int s_poke_count;
+int mm3_coop_test_pokes(void) { return s_poke_count; }
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 2047]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
 static void controls(Player *p);
@@ -1008,7 +1010,7 @@ static void enabled(int on)
     mm3_coop_menu_refresh();
     cyc_mod_set_return_hook(s_on ? after_return : NULL);
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
-    nes_mod_set_local_only("Mega Man 3 co-op development", s_on);
+    nes_mod_set_local_only("Mega Man 3 co-op development", s_on && !mm3_net_available());
 }
 void mm3_coop_power_on(void)
 {
@@ -1021,6 +1023,7 @@ void mm3_coop_power_on(void)
 }
 bool mm3_coop_option(const char *name, const char *value)
 {
+    if (mm3_net_locked() && strcmp(name,"--coop-view")) return false;
     if (!strcmp(name,"--coop-wait-both")) {
         if (strcmp(value,"on") && strcmp(value,"off")) return false;
         s_wait_both = !strcmp(value,"on");return true;
@@ -1039,11 +1042,14 @@ bool mm3_coop_option(const char *name, const char *value)
     }
     if (!strcmp(name,"--coop-view")) {
         int old_independent = mm3_coop_independent();
-        if (!strcmp(value,"shared")) s_view = 0;
-        else if (!strcmp(value,"split")) s_view = 1;
-        else if (!strcmp(value,"p1") || !strcmp(value,"player1")) s_view = 2;
-        else if (!strcmp(value,"p2") || !strcmp(value,"player2")) s_view = 3;
+        int next;
+        if (!strcmp(value,"shared")) next = 0;
+        else if (!strcmp(value,"split")) next = 1;
+        else if (!strcmp(value,"p1") || !strcmp(value,"player1")) next = 2;
+        else if (!strcmp(value,"p2") || !strcmp(value,"player2")) next = 3;
         else return false;
+        if (mm3_net_locked() && !!next != old_independent) return false;
+        s_view = next;
         if (old_independent != mm3_coop_independent()) mm3_ws_coop_reset();
         mm3_coop_view_policy(); mm3_ws_refresh_policy(); return true;
     }
@@ -1134,7 +1140,17 @@ static int wait_valid(const uint8_t *in,int size)
 }
 static int wait_set(const uint8_t *in,int size)
 { if (!wait_valid(in,size)) return 0;if (size) memcpy(&E,in,size);else memset(&E,0,sizeof E);return 1; }
-static void reset(void) { enabled(0); s_roster = s_view = s_wait_both = 0; }
+static void reset(void) { if (!mm3_net_locked()) { enabled(0); s_roster = s_view = s_wait_both = 0; } }
+static void activate(void)
+{
+    if (mm3_net_locked()) return;
+    const char *package="mega-man-3-usa.coop";char roster[16]="megaman",view[16]="shared",wait[16]="off";
+    nes_mod_option_value(package,"coop","player-one",roster,sizeof roster);
+    nes_mod_option_value(package,"coop","coop-view",view,sizeof view);
+    nes_mod_option_value(package,"coop","wait-both",wait,sizeof wait);
+    mm3_coop_option("--coop-p1",roster);mm3_coop_option("--coop-wait-both",wait);
+    mm3_coop_option("--coop","on");mm3_coop_option("--coop-view",view);
+}
 #ifdef CYC_WITH_SDL
 static void tcp(int id, const char *line)
 {
@@ -1173,6 +1189,7 @@ NES_MOD_CONSTRUCTOR(register_mm3_coop)
     nes_mod_register_function_entry_plugin("mm3.coop.game-over", 0xCBB1, scene_exit);
     nes_mod_register_function_entry_plugin("mm3.coop.stage-clear", 0xCBCE, scene_exit);
     nes_mod_register_reset_callback(reset);
+    nes_mod_register_activation_plugin("mega-man-3-usa.coop",activate);
     nes_mod_register_savestate_hook("mm3.coop", get, set);
     nes_mod_register_savestate_validator("mm3.coop", valid);
     nes_mod_register_savestate_hook("mm3.coop-lifecycle",life_get,life_set);

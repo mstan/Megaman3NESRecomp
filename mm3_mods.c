@@ -3,6 +3,7 @@
 #include "mm3_proto.h"
 #include "mm3_charge.h"
 #include "mm3_coop.h"
+#include "mm3_net.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
@@ -18,6 +19,7 @@
 
 static const char HOOK[] = "mm3.enhancement.player-dispatch";
 static int s_weapons;
+int mm3_weapons_enabled(void) { return s_weapons; }
 static uint8_t s_chr[12], s_palette[12][4];
 static int s_tables_ready;
 typedef struct {
@@ -43,7 +45,7 @@ static void weapons_set(int on)
     W.previous = W.pending = 0;
     mm3_mods_refresh_hooks();
     /* Lift only after this title's complete simulation profile is qualified. */
-    nes_mod_set_local_only("Mega Man 3 quick weapon switching", s_weapons);
+    nes_mod_set_local_only("Mega Man 3 quick weapon switching", s_weapons && !mm3_net_available());
 }
 
 void mm3_mods_refresh_hooks(void)
@@ -151,6 +153,7 @@ void mm3_mods_frame_end(void) { s_states[0].pending = s_states[1].pending = 0; m
 
 bool mm3_mods_option(const char *name, const char *value)
 {
+    if (mm3_net_locked()) return false;
     if (strcmp(name, "--weapon-cycle")) return mm3_coop_option(name, value) || mm3_charge_option(name, value) || mm3_proto_option(name, value);
     if (strcmp(value, "on") && strcmp(value, "off")) return false;
     weapons_set(!strcmp(value, "on"));
@@ -181,8 +184,8 @@ static int state_set(const uint8_t *in, int len)
     if (len) memcpy(s_states, in, len); else memset(s_states, 0, sizeof s_states);
     return 1;
 }
-static void reset_mods(void) { weapons_set(0); }
-static void activate_weapons(void) { weapons_set(1); }
+static void reset_mods(void) { if (!mm3_net_locked()) weapons_set(0); }
+static void activate_weapons(void) { if (!mm3_net_locked()) weapons_set(1); }
 
 #ifdef CYC_WITH_SDL
 static void tcp_mods(int id, const char *line)

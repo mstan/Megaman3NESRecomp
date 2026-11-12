@@ -4,6 +4,7 @@
 #include "mm3_coop.h"
 #include "mm3_mods.h"
 #include "mm3_widescreen.h"
+#include "mm3_net.h"
 #include "mm3_proto_sheet.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -12,6 +13,9 @@
 #include "mod_function_hooks.h"
 #include "mod_runtime.h"
 #include "mod_savestate.h"
+#ifdef NESRECOMP_NET
+#include "nes_netplay_identity.h"
+#endif
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -52,6 +56,18 @@ static int s_on, s_real = 1, s_start = 1, s_loaded;
 static uint8_t ram(unsigned a) { return cyc_cpu_ram()[a & 0x7FF]; }
 static void poke(unsigned a, unsigned v) { cyc_mod_poke((uint16_t)a, (uint8_t)v); }
 int mm3_proto_available(void) { return s_on; }
+int mm3_proto_real(void) { return s_real; }
+int mm3_proto_start(void) { return s_start; }
+int mm3_proto_source_hash(uint8_t out[32])
+{
+#ifdef NESRECOMP_NET
+    uint8_t both[64];nes_sha256(MM3_PROTO_PNG,sizeof MM3_PROTO_PNG,both);
+    nes_sha256(MM3_PROTO_JUMP_PNG,sizeof MM3_PROTO_JUMP_PNG,both+32);
+    nes_sha256(both,sizeof both,out);return 1;
+#else
+    (void)out;return 0;
+#endif
+}
 int mm3_proto_selected(void) { return s_on && (mm3_coop_enabled() ? mm3_coop_character(mm3_coop_seat()) : S.selected); }
 int mm3_proto_teleporting(void) { return s_on && S.teleport; }
 int mm3_proto_reflecting(void) { return s_on && R.active; }
@@ -102,7 +118,7 @@ static void set_enabled(int enabled)
     s_on = enabled != 0;
     mm3_proto_refresh_hooks();
     mm3_mods_refresh_hooks(); mm3_ws_refresh_policy();
-    nes_mod_set_local_only("Mega Man 3 Proto Man", s_on);
+    nes_mod_set_local_only("Mega Man 3 Proto Man", s_on && !mm3_net_available());
 }
 
 void mm3_proto_power_on(void)
@@ -620,9 +636,10 @@ static int menu_state_set(const uint8_t *in, int size)
     if (size) memcpy(s_menus, in, size); else memset(s_menus, 0, sizeof s_menus);
     return 1;
 }
-static void reset(void) { set_enabled(0); s_real = s_start = 1; }
+static void reset(void) { if (!mm3_net_locked()) { set_enabled(0); s_real = s_start = 1; } }
 static void activate(void)
 {
+    if (mm3_net_locked()) return;
     const char *package = "mega-man-3-usa.character.protoman";
     char value[16];
     s_real = !nes_mod_option_value(package, "protoman", "mode", value, sizeof value) || strcmp(value, "megaman");
@@ -631,6 +648,7 @@ static void activate(void)
 }
 bool mm3_proto_option(const char *name, const char *value)
 {
+    if (mm3_net_locked()) return false;
     if (!strcmp(name, "--protoman")) {
         if (strcmp(value, "on") && strcmp(value, "off")) return false;
         set_enabled(!strcmp(value, "on")); return true;

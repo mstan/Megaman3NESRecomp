@@ -1,0 +1,22 @@
+# Controller-only reset route: Snake Man stage entry and both input-v2 L/R actions.
+# Columns: match tick, canonical hexadecimal NES pad, game-action bitset (L=1,R=2).
+300 10 0
+302 00 0
+600 10 0
+602 00 0
+800 08 0
+802 00 0
+900 10 0
+902 00 0
+1500 01 0
+1550 00 0
+1570 80 0
+1590 00 0
+1620 40 0
+1622 00 0
+1950 08 0
+1952 00 0
+2250 00 2
+2252 00 0
+2300 00 1
+2302 00 0

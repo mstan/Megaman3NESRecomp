@@ -3,6 +3,10 @@
 #include <stddef.h>
 #include <stdint.h>
 int mm3_charge_available(void);
+int mm3_charge_requested(void);
+int mm3_charge_sound(void);
+int mm3_charge_flash(void);
+int mm3_charge_configure(int enabled,int sound,int flash);
 int mm3_charge_counter(void);
 void mm3_charge_dispatch(void);
 void mm3_charge_cancel(void);

@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 int mm3_proto_available(void);
+int mm3_proto_real(void);
+int mm3_proto_start(void);
 int mm3_proto_selected(void);
 int mm3_proto_teleporting(void);
 /* The native slot3 collision belongs to a reflected Buster during this scope. */

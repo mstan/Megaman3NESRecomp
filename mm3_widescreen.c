@@ -30,6 +30,7 @@
 #include "mm3_coop.h"
 #include "mm3_coop_menu.h"
 #include "mm3_world.h"
+#include "mm3_net.h"
 
 #include "cyc_core.h"
 #include "cyc_mod.h"
@@ -37,6 +38,7 @@
 #include "cyc_video.h"
 #include "mod_function_hooks.h"
 #include "mod_savestate.h"
+#include "mod_runtime.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -359,7 +361,7 @@ static void simulation_window(void)
 {
     s_win_valid = false; s_rects.count = 0;
     int independent = mm3_coop_independent();
-    int width = cyc_video_width();
+    int width = mm3_net_simulation_width(cyc_video_width());
     if ((mm3_coop_enabled() && !mm3_coop_scene_active()) ||
         (!independent && (s_mode == NES_VIDEO_STOCK || width <= 256 || width > CYC_VIDEO_MAX_WIDTH)) || ram(0x22) >= STAGE_COUNT) return;
     ensure_stage();
@@ -965,6 +967,7 @@ void mm3_ws_refresh_policy(void)
     cyc_render_set_stock_compositing(characters);
     bool capture = (s_check || characters) != 0;
     if (capture != cyc_background_enabled) cyc_render_capture_background(capture);
+    nes_mod_set_local_only("Mega Man 3 widened world",s_mode != NES_VIDEO_STOCK && !mm3_net_available());
 }
 
 void mm3_ws_power_on(void)
@@ -1002,6 +1005,7 @@ void mm3_ws_state_loaded(void)
 bool mm3_ws_set_mode(int mode)
 {
     if (mode < NES_VIDEO_STOCK || mode >= NES_VIDEO_MODE_COUNT) return false;
+    if (mm3_net_locked() && !mm3_coop_independent()) return false;
     s_mode = mode;
     cyc_video_set_mode(mode);
     if (mm3_coop_independent()) mm3_coop_view_policy();

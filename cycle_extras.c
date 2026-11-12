@@ -9,6 +9,8 @@
 #include "mm3_charge.h"
 #include "mm3_coop.h"
 #include "mm3_world.h"
+#include "mm3_proto.h"
+#include "mm3_net.h"
 #ifdef CYC_WITH_SDL
 #include "cyc_tcp.h"
 #endif
@@ -23,6 +25,32 @@ static unsigned frame, nmi, busy, complete;
 static uint64_t start_cycles;
 static uint8_t previous_busy;
 static int reduce_slowdown = 1;
+Mm3Settings mm3_host_settings(void)
+{
+    Mm3Settings c={mm3_coop_enabled(),mm3_coop_independent(),mm3_coop_character(0),mm3_coop_wait_both(),
+        mm3_proto_available(),mm3_proto_real(),mm3_proto_start(),mm3_weapons_enabled(),
+        mm3_charge_available(),mm3_charge_sound(),mm3_charge_flash(),mm3_ws_mode()!=NES_VIDEO_STOCK,(int)cyc_extra_scanlines()};
+    return c;
+}
+int mm3_host_apply_settings(Mm3Settings c,int local_seat)
+{
+    if (mm3_net_locked()) return 0;
+    if (!mm3_charge_configure(c.charge,c.sound,c.flash)) return 0;
+    if (!mm3_proto_option("--proto-mode",c.real?"protoman":"megaman") ||
+        !mm3_proto_option("--proto-start",c.start?"protoman":"megaman") ||
+        !mm3_proto_option("--protoman",c.proto?"on":"off") || mm3_proto_available()!=c.proto) return 0;
+    int view=mm3_coop_view_mode();
+    if (!mm3_coop_option("--coop-p1",c.roster?"protoman":"megaman") ||
+        !mm3_coop_option("--coop-wait-both",c.wait_both?"on":"off") ||
+        !mm3_coop_option("--coop",c.coop?"on":"off") ||
+        !mm3_mods_option("--weapon-cycle",c.weapons?"on":"off")) return 0;
+    if (!c.independent) view=0;else if (!view) view=local_seat==1?3:2;
+    static const char *views[]={"shared","split","p1","p2"};
+    if (!mm3_coop_option("--coop-view",views[view])) return 0;
+    int mode=c.wide ? (mm3_ws_mode()==NES_VIDEO_STOCK?NES_VIDEO_FIT:mm3_ws_mode()) : NES_VIDEO_STOCK;
+    if (!mm3_ws_set_mode(mode) || !cyc_set_extra_scanlines((unsigned)c.lines)) return 0;
+    reduce_slowdown=c.lines!=0;return 1;
+}
 
 static void power_on(void *ctx)
 {
@@ -38,10 +66,11 @@ static void load_setting(void *ctx, const char *key, const char *value)
 {
     (void)ctx;
     if (!strcmp(key, "ReduceSlowdown")) {
+        if (mm3_net_locked()) return;
         if (!strcmp(value, "0")) reduce_slowdown = 0;
         else if (!strcmp(value, "1")) reduce_slowdown = 1;
     }
-    if (!strcmp(key, "Widescreen")) mm3_ws_set_mode_name(value);
+    if (!strcmp(key, "Widescreen") && !mm3_net_locked()) mm3_ws_set_mode_name(value);
 }
 
 static void save_settings(void *ctx, FILE *f)
@@ -56,6 +85,7 @@ static void save_settings(void *ctx, FILE *f)
 static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 {
     (void)ctx;
+    if (!strcmp(item->key, "mm3.coop_view")) { *out = mm3_coop_view_mode(); return 1; }
     if (!strcmp(item->key, "mm3.widescreen")) { *out = mm3_ws_mode(); return 1; }
     if (strcmp(item->key, "mm3.reduce_slowdown")) return 0;
     *out = cyc_extra_scanlines() != 0;
@@ -65,14 +95,20 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
 static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 {
     (void)ctx;
+    if (!strcmp(item->key, "mm3.coop_view")) {
+        static const char *views[] = {"shared", "split", "p1", "p2"};
+        return value >= 0 && value < 4 && mm3_coop_option("--coop-view", views[value]);
+    }
     if (!strcmp(item->key, "mm3.widescreen")) return mm3_ws_set_mode(value);
     if (strcmp(item->key, "mm3.reduce_slowdown") || (value != 0 && value != 1)) return 0;
+    if (mm3_net_locked()) return 0;
     if (!cyc_set_extra_scanlines(value ? 128u : 0u)) return 0;
     reduce_slowdown = value;
     return 1;
 }
 
 static const char *const widescreen_choices[] = {"Off (4:3)", "16:9", "21:9", "32:9", "Fit window"};
+static const char *const coop_view_choices[] = {"Shared screen", "Independent split screen", "Player one", "Player two"};
 static const RecompRuntimeUiItem menu_items[] = {
     {.key = "mm3.reduce_slowdown", .section = "Game", .label = "Reduce slowdown",
      .description = "Keep gameplay smooth in enemy-heavy scenes. Turn off for original NES timing.",
@@ -80,9 +116,26 @@ static const RecompRuntimeUiItem menu_items[] = {
     {.key = "mm3.widescreen", .section = "Display", .label = "Widescreen (aspect ratio)",
      .description = "Show more of each stage at the sides. Menus and cutscenes stay 4:3.",
      .type = RECOMP_RUNTIME_UI_CHOICE, .minimum = NES_VIDEO_STOCK, .maximum = NES_VIDEO_FIT, .step = 1,
-     .choices = widescreen_choices, .choice_count = 5}
+     .choices = widescreen_choices, .choice_count = 5},
+    {.key = "mm3.coop_view", .section = "Display", .label = "Two-player view",
+     .description = "Choose a shared screen or either independent player view. Online matches keep their agreed shared or independent simulation.",
+     .type = RECOMP_RUNTIME_UI_CHOICE, .minimum = 0, .maximum = 3, .step = 1,
+     .choices = coop_view_choices, .choice_count = 4}
 };
-static const RecompRuntimeUiCallbacks menu_callbacks = {.get_value = get_value, .set_value = set_value};
+static int menu_enabled(void *ctx, const RecompRuntimeUiItem *item)
+{
+    (void)ctx;
+    if (!strcmp(item->key,"mm3.coop_view")) return mm3_coop_enabled();
+    return !mm3_net_locked();
+}
+#ifdef CYC_HOST_EXTRAS_HAS_NETPLAY_VALUE_POLICY
+static bool netplay_menu_value_allowed(void *ctx, const RecompRuntimeUiItem *item, int value)
+{
+    (void)ctx;
+    return !strcmp(item->key,"mm3.coop_view") && mm3_net_locked() && mm3_coop_independent() && value >= 1 && value <= 3;
+}
+#endif
+static const RecompRuntimeUiCallbacks menu_callbacks = {.get_value = get_value, .set_value = set_value, .is_enabled = menu_enabled};
 #endif
 
 #ifdef CYC_WITH_SDL
@@ -90,6 +143,7 @@ static void tcp_slowdown(int id, const char *line)
 {
     bool enabled;
     if (cyc_tcp_bool(line, "enabled", &enabled)) {
+        if (mm3_net_locked()) { cyc_tcp_err(id,"timing is fixed for this match");return; }
         if (!cyc_set_extra_scanlines(enabled ? 128u : 0u)) {
             cyc_tcp_err(id, "CPU budget enhancement unavailable"); return;
         }
@@ -117,6 +171,7 @@ static void tcp_widescreen(int id, const char *line)
 /* Test driving only (refill health on a scripted route): a CPU RAM store. */
 static void tcp_poke(int id, const char *line)
 {
+    if (mm3_net_locked()) { cyc_tcp_err(id,"gameplay stores are unavailable during a match");return; }
     long addr, value;
     if (!cyc_tcp_long(line, "addr", &addr) || !cyc_tcp_long(line, "value", &value) ||
         addr < 0 || addr > 0x7FF || value < 0 || value > 255 || !cyc_mod_poke((uint16_t)addr, (uint8_t)value)) {
@@ -157,6 +212,7 @@ static void close_stats(void) { if (stats) fclose(stats); stats = NULL; }
 static bool option(void *ctx, const char *name, const char *value)
 {
     (void)ctx;
+    mm3_net_note_option(name);
     if (mm3_mods_option(name, value)) return true;
     if (!strcmp(name, "--widescreen")) return mm3_ws_set_mode_name(value);
     if (strcmp(name, "--mm3-frame-stats")) return false;
@@ -218,7 +274,7 @@ const CycHostExtras *cyc_host_extras(void)
         {"--proto-start", true, "protoman|megaman: starting solo character"},
         {"--charge", true, "on|off: optional MM4 charged Mega Buster"},
         {"--mm4-donor", true, "FILE: verified local Mega Man 4 (USA) source image"},
-        {"--coop", true, "on|off: simultaneous native players (development)"},
+        {"--coop", true, "on|off: simultaneous native players"},
         {"--coop-p1", true, "megaman|protoman: complementary co-op roster"},
         {"--coop-view", true, "shared|split|p1|p2: co-op view"},
         {"--coop-wait-both", true, "on|off: both active players meet at room exits"},
@@ -231,7 +287,10 @@ const CycHostExtras *cyc_host_extras(void)
         .input = input, .input_profile = &mm3_input_profile,
         .audio_rate = 48000, .audio_mix = audio_mix,
 #ifdef CYC_WITH_RECOMP_UI
-        .menu_items = menu_items, .menu_item_count = 2, .menu_callbacks = &menu_callbacks,
+        .menu_items = menu_items, .menu_item_count = sizeof menu_items / sizeof menu_items[0], .menu_callbacks = &menu_callbacks,
+#ifdef CYC_HOST_EXTRAS_HAS_NETPLAY_VALUE_POLICY
+        .menu_netplay_value_allowed = netplay_menu_value_allowed,
+#endif
 #endif
 #ifdef CYC_WITH_SDL
         .tcp_setup = tcp_setup,
