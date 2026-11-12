@@ -37,6 +37,14 @@ typedef struct {
 } ProtoState;
 static ProtoState s_states[2];
 #define S s_states[mm3_coop_seat()]
+/* Marine is one native body definition, including its vessel. Keep that
+ * immutable native draw and replace only the pilot's helmet. */
+enum { MARINE_PARTS = 32 };
+typedef struct { uint8_t x,y,attr,height,pattern[32],palette[4]; } MarinePart;
+typedef struct { uint8_t active,count; MarinePart parts[MARINE_PARTS]; } MarineFrame;
+typedef struct { char magic[4]; MarineFrame building,shown; } MarineState;
+static MarineState s_marine[2];
+#define V s_marine[mm3_coop_seat()]
 typedef struct {
     char magic[4];
     uint8_t enabled, running, active, shot, weapon, animation, state, boss;
@@ -126,6 +134,7 @@ void mm3_proto_power_on(void)
     memset(s_states, 0, sizeof s_states);
     memset(s_reflections, 0, sizeof s_reflections);
     memset(s_menus, 0, sizeof s_menus);
+    memset(s_marine,0,sizeof s_marine);
     S.selected = s_on && s_start;
     set_enabled(s_on);
 }
@@ -213,11 +222,11 @@ static int body_pose(int native_definition)
         CYC_PROTO_IDLE0 + ((ram(0x95) >> 3) & 3);
 }
 
-void mm3_proto_draw_begin(void) { for (int i = 0; i < 2; i++) memset(&s_states[i].building, 0, sizeof S.building); mm3_charge_draw_begin(); }
+void mm3_proto_draw_begin(void) { for (int i = 0; i < 2; i++) { memset(&s_states[i].building, 0, sizeof S.building); memset(&s_marine[i].building,0,sizeof V.building); } mm3_charge_draw_begin(); }
 void mm3_proto_draw_latch(void)
 {
     mm3_charge_draw_latch();
-    for (int i = 0; i < 2; i++) { s_menus[i].shown = s_menus[i].building; s_states[i].shown = s_states[i].building; }
+    for (int i = 0; i < 2; i++) { s_menus[i].shown = s_menus[i].building; s_states[i].shown = s_states[i].building; s_marine[i].shown=s_marine[i].building; }
     /* Menus also DMA OAM, without running the stage's entity drawing pass. */
     for (int slot = 0; !mm3_ws_private_primary() && slot < 64; slot++) if (S.shown.mask & (1ull << slot))
         if (memcmp(S.shown.oam + slot * 4, cyc_cpu_ram() + 0x200 + slot * 4, 4)) {
@@ -233,6 +242,8 @@ static int pose_begin(uint16_t address)
     CycModRegs r; cyc_mod_regs(&r);
     BodyFrame *f = &S.building;
     int pose = body_pose(r.a);
+    V.building.active=(uint8_t)(mm3_proto_selected() && !S.teleport &&
+        (ram(0x30)==8 || (ram(0x5C0)>=0xDA && ram(0x5C0)<=0xDC) || ram(0x5C0)==0xB1));
     f->replace = (mm3_proto_selected() || S.teleport) && pose >= 0;
     f->pose = (uint8_t)(pose < 0 ? 0 : pose);
     f->x = ram(0x13); f->y = ram(0x12);
@@ -265,6 +276,18 @@ static int pose_done(uint16_t address)
     if (!s_on || ram(0x96) != 0) return 0;
     for (int slot = 0; slot < 64; slot++) if (S.building.mask & (1ull << slot))
         memcpy(S.building.oam + slot * 4, cyc_cpu_ram() + 0x200 + slot * 4, 4);
+    if (V.building.active) {
+        V.building.count=0;
+        for(int slot=0;slot<64 && V.building.count<MARINE_PARTS;slot++) if(S.building.mask&(1ull<<slot)) {
+            const uint8_t *o=S.building.oam+slot*4;
+            MarinePart *p=&V.building.parts[V.building.count++];
+            p->x=o[3];p->y=o[0];p->attr=o[2];p->height=ram(0xFF)&0x20?16:8;
+            unsigned pattern=p->height==16?(o[1]&1)*0x1000+(o[1]&0xFE)*16:
+                (ram(0xFF)&8?0x1000:0)+o[1]*16;
+            for(int b=0;b<p->height*2;b++)p->pattern[b]=cyc_render_chr((uint16_t)(pattern+b));
+            for(int c=0;c<4;c++)p->palette[c]=ram(0x630+(p->attr&3)*4+c)&63;
+        }
+    }
     return 0;
 }
 
@@ -349,10 +372,39 @@ static int menu_place(int slot, uint32_t *out)
 
 uint64_t mm3_proto_private_mask(void)
 { return s_on && s_loaded && S.shown.replace ? S.shown.mask : 0; }
+static void paint_marine(uint32_t *out,int width,int origin,const uint8_t *opaque)
+{
+    const BodyFrame *f=&S.shown;
+    const CycProtoPose *head=&s_atlas.poses[CYC_PROTO_IDLE0];
+    /* The idle crop has eight empty rows above its helmet. Its 16x14
+     * cockpit crop follows the native pilot face at the body centre. */
+    int left=origin+f->x-8,top=f->y+1+head->top_y+8;
+    for(int i=V.shown.count-1;i>=0;i--) {
+        const MarinePart *p=&V.shown.parts[i];
+        if(p->y>=0xEF)continue;
+        for(int sy=0;sy<p->height;sy++)for(int sx=0;sx<8;sx++) {
+            int x=origin+p->x+sx,y=p->y+1+sy;
+            if(x<0 || x>=width || y<0 || y>=f->clip || !(cyc_render_line_mask(y)&16))continue;
+            if(x>=left && x<left+16 && y>=top && y<top+14)continue;
+            if((p->attr&32) && opaque && opaque[y*width+x])continue;
+            int row=p->attr&128?p->height-1-sy:sy,bit=p->attr&64?sx:7-sx;
+            int a=row/8*16+(row&7),c=((p->pattern[a]>>bit)&1)|(((p->pattern[a+8]>>bit)&1)<<1);
+            if(c)out[y*width+x]=cyc_render_color_value(p->palette[c]);
+        }
+    }
+    for(int sy=0;sy<14;sy++)for(int sx=0;sx<head->width;sx++) {
+        int c=head->pixels[(sy+8)*32+sx];if(!c)continue;
+        int x=origin+f->x+(f->right?15-sx:sx-16),y=top+sy;
+        if(x<left || x>=left+16 || x<0 || x>=width || y<0 || y>=f->clip || !(cyc_render_line_mask(y)&16))continue;
+        if(f->behind && opaque && opaque[y*width+x])continue;
+        out[y*width+x]=color(s_atlas.colors[c-1],f->weapon,0);
+    }
+}
 void mm3_proto_paint_private(uint32_t *out, int width, int origin, const uint8_t *opaque)
 {
     BodyFrame *f = &S.shown;
     if (!mm3_proto_private_mask()) return;
+    if(V.shown.active){paint_marine(out,width,origin,opaque);return;}
     const CycProtoPose *p = &s_atlas.poses[f->pose];
     for (int sy = 0; sy < p->height; sy++) for (int sx = 0; sx < p->width; sx++) {
         int index = p->pixels[sy * 32 + sx];
@@ -641,6 +693,38 @@ static int menu_state_set(const uint8_t *in, int size)
     if (size) memcpy(s_menus, in, size); else memset(s_menus, 0, sizeof s_menus);
     return 1;
 }
+static int marine_get(uint8_t *out,int cap)
+{
+    int count=mm3_coop_enabled()?2:1,size=count*(int)sizeof V;
+    if(cap<size)return -1;
+    for(int i=0;i<count;i++)memcpy(s_marine[i].magic,"MV01",4);
+    memcpy(out,s_marine,size);return size;
+}
+static int marine_valid(const uint8_t *in,int size)
+{
+    if(!size)return 1;
+    int count=mm3_coop_enabled()?2:1;
+    if(!in || size!=count*(int)sizeof V)return 0;
+    for(int i=0;i<count;i++) {
+        MarineState n;memcpy(&n,in+i*sizeof n,sizeof n);
+        if(memcmp(n.magic,"MV01",4))return 0;
+        const MarineFrame *frames[]={&n.building,&n.shown};
+        for(int k=0;k<2;k++) {
+            const MarineFrame *f=frames[k];if(f->active>1 || f->count>MARINE_PARTS)return 0;
+            for(int j=0;j<f->count;j++) {
+                const MarinePart *p=&f->parts[j];if(p->height!=8 && p->height!=16)return 0;
+                for(int c=0;c<4;c++)if(p->palette[c]>63)return 0;
+            }
+        }
+    }
+    return 1;
+}
+static int marine_set(const uint8_t *in,int size)
+{
+    if(!marine_valid(in,size))return 0;
+    if(size)memcpy(s_marine,in,size);else memset(s_marine,0,sizeof s_marine);
+    return 1;
+}
 static void reset(void) { if (!mm3_net_locked()) { set_enabled(0); s_real = s_start = 1; } }
 static void activate(void)
 {
@@ -703,6 +787,8 @@ NES_MOD_CONSTRUCTOR(register_mm3_proto)
     nes_mod_register_savestate_validator("mm3.protoman", state_valid);
     nes_mod_register_savestate_hook("mm3.proto-menu", menu_state_get, menu_state_set);
     nes_mod_register_savestate_validator("mm3.proto-menu", menu_state_valid);
+    nes_mod_register_savestate_hook("mm3.proto-marine",marine_get,marine_set);
+    nes_mod_register_savestate_validator("mm3.proto-marine",marine_valid);
     nes_mod_register_savestate_hook("mm3.reflection",reflection_get,reflection_set);
     nes_mod_register_savestate_validator("mm3.reflection",reflection_valid);
 }

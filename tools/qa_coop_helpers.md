@@ -58,3 +58,15 @@ The real impact must damage that enemy and clear the impact owner's three
 linked segments, while all three partner segments remain active. Each shooter
 pays its own native two-energy cost. Exchange the impact owner, compare Native
 and interpreter, and check cold state/pictures/PCM with the partner laser live.
+
+## Native Marine cockpit
+
+Use real water terrain, select Marine with L/R, summon with B and land on it.
+Check each seat's native boarding, movement, firing, periodic owner fuel use
+and natural empty-fuel dismount, preserving the other seat's body/inventory.
+For Proto, retain the native vessel and replace only the cockpit helmet.
+Compare opaque vessel pixels outside the cockpit against an ordinary native
+Marine after accounting for camera translation, then compare the helmet with
+the bundled Proto art. Include the native primary and private co-op draw paths
+and a cold continuation with the vessel visible. Keep invulnerability flashing
+disabled for static pixel comparisons.
