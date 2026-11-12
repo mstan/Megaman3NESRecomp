@@ -33,3 +33,13 @@ With the optional charge mod, each peer must independently supply the verified
 MM4 USA source. Confirm real half/full releases for both characters and equal
 confirmed state; reject missing/wrong sources and QA RAM overrides before
 gameplay. Network checks do not establish complete stage or platform coverage.
+
+The final provider integration also uses the actual catalog, without CLI
+gameplay toggles: host Co-op enabled with Split, Proto Man as P1 and wait-both;
+guest catalog disabled with a different local layout and timing. Require the
+host's `mm3=` session row in its outgoing session configuration and the guest's
+accepted row, successful profile sealing, and the confirmed digest above.
+After leaving, compare the restore callback's actual title/engine settings
+with the saved offline settings, including view and aspect. The next offered
+profile reads the persistent local catalog and can differ from those restored
+runtime settings.

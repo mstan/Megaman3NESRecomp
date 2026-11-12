@@ -12,7 +12,7 @@
 Static recompilation of Mega Man 3 (NES) for native PC.
 Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
-> **Status: Work in progress.** Title screen, robot master select, and basic stage gameplay are functional. Boss fights, passwords, and special weapons are untested and may softlock. Visual gaps are expected. If you find a bug, please open an issue.
+> **Status: Feature branch under release validation.** The cycle build has targeted character, co-op, weapon, native menu, adaptive Fit and rollback checks. All 18 stages have bounded location and real boss-clear smoke coverage through the native ending. These checks use disclosed position, equipment, HP and phase assistance; they do not establish complete normal-route playthroughs or other-platform coverage.
 
 ## Cycle backend migration branch
 
@@ -102,23 +102,30 @@ locked until leaving, which restores local preferences. `tests/NETPLAY.md`
 describes the controller-only network regression route.
 
 These features have targeted Windows native/interpreter, current-state, visual
-and delayed-input network checks. Full-game content, other platforms and release
-integration remain under validation; this branch is not a completed release.
+and delayed-input network checks. The final shared provider also passes actual
+catalog-selected Native/interpreter LAN play, equal confirmed and complete final
+states, and restoration of each peer's offline settings. Other platforms and
+release integration remain under validation; this branch is not a completed
+release.
 ## What Works
 
 - Title screen
 - Main menu (GAME START / PASS WORD selection)
 - Robot master stage select screen and navigation
-- Loading into stages with background scrolling and basic enemies
+- All 18 stages at main, available checkpoint and boss smoke stops
 - Player movement, jumping, and the Mega Buster
+- Native boss defeats, refight return pods and the Machine-to-Gamma ending chain
+- Optional Proto Man, MM4 charge shots, local co-op and rollback netplay
+- Shared Rush Jet rides with native owner control and fuel
 
 ## Known Limitations
 
-- **Boss fights** are untested and likely to stall or softlock
-- **Special weapons** are untested
-- **Passwords** are untested
-- **Visual elements** may have minor glitches or missing sprites in some areas
-- Audio is basic (APU register writes are captured but full audio mixing is work-in-progress)
+- Full normal-route traversal and complete boss attack patterns were bypassed
+  in the bounded content checks; see `tests/CONTENT.md` for the scope.
+- Native password transitions were exercised, but exhaustive password coverage
+  has not been established.
+- Other platforms and ROM revisions have not received these qualification runs.
+- Final owner playtest and packaged release integration remain open.
 
 ## Quick Start
 
