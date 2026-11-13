@@ -267,8 +267,10 @@ int mm3_charge_private_place(int oam_slot, uint32_t *out, int width, int origin,
                 if (x < 0 || x >= width || y < 0 || y >= 240) continue;
                 if (!(cyc_render_line_mask(y) & 0x10) || (x < 8 && !(cyc_render_line_mask(y) & 4))) continue;
                 if ((p->behind || (attr & 0x20)) && opaque && opaque[y * width + x]) continue;
-                uint8_t color = s_data.palette[attr & 1][index];
-                if (!(attr & 1) && p->charge >= HALF_AT && s_flash_enabled) {
+                static const uint8_t proto_palette[4] = {0x0F,0x16,0x26,0x30};
+                int proto = mm3_proto_selected();
+                uint8_t color = proto ? proto_palette[index] : s_data.palette[attr & 1][index];
+                if (!proto && !(attr & 1) && p->charge >= HALF_AT && s_flash_enabled) {
                     int phase = ((p->charge >> 3) & 0xFC) | ((p->charge >> 1) & 3);
                     color = s_flash[index - 1][phase];
                 }

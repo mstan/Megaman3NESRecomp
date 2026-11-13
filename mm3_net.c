@@ -95,8 +95,8 @@ static int catalog_supported(void)
 }
 static int describe(Mm3Settings c,char *out,int cap)
 {
-    return snprintf(out,cap,"1:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d",c.coop,c.independent,c.roster,c.wait_both,
-        c.proto,c.real,c.start,c.weapons,c.charge,c.sound,c.flash,c.wide,c.lines);
+    return snprintf(out,cap,"2:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d",c.coop,c.independent,c.roster,c.wait_both,
+        c.proto,c.real,c.start,c.weapons,c.charge,c.sound,c.flash,c.wide,c.lines,c.flicker);
 }
 static int settings_get(char *out,int cap) { return describe(mm3_host_settings(),out,cap); }
 static int settings_offer(char *out,int cap) { return describe(offer(),out,cap); }
@@ -104,11 +104,12 @@ static int settings_apply(const char *value)
 {
     Mm3Settings c;int version,n=0;
     if (!mm3_net_available() || (s_cli&64) || mm3_coop_test_pokes() || !catalog_supported()) return 0;
-    if (sscanf(value,"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d%n",&version,&c.coop,&c.independent,&c.roster,&c.wait_both,
-        &c.proto,&c.real,&c.start,&c.weapons,&c.charge,&c.sound,&c.flash,&c.wide,&c.lines,&n)!=14 || value[n] || version!=1) return 0;
+    if (sscanf(value,"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d%n",&version,&c.coop,&c.independent,&c.roster,&c.wait_both,
+        &c.proto,&c.real,&c.start,&c.weapons,&c.charge,&c.sound,&c.flash,&c.wide,&c.lines,&c.flicker,&n)!=15 || value[n] || version!=2) return 0;
     if (c.coop!=1 || c.proto!=1 || c.independent<0 || c.independent>1 || c.roster<0 || c.roster>1 || c.wait_both<0 || c.wait_both>1 ||
         c.real<0 || c.real>1 || c.start!=1 || c.weapons<0 || c.weapons>1 || c.charge<0 || c.charge>1 || c.sound<0 || c.sound>1 ||
-        c.flash<0 || c.flash>1 || c.wide<0 || c.wide>1 || (c.lines!=0 && c.lines!=128) || ((c.independent || !c.wide) && s_width!=256)) return 0;
+        c.flash<0 || c.flash>1 || c.wide<0 || c.wide>1 || c.flicker<0 || c.flicker>1 ||
+        (c.lines!=0 && c.lines!=128) || ((c.independent || !c.wide) && s_width!=256)) return 0;
     preserve_offline();
     s_applying=1;int ok=mm3_host_apply_settings(c,nes_netplay_local_slot());s_applying=0;if (!ok) return 0;
     s_sealed=1;nes_netplay_require_capabilities(1);nes_netplay_require_player_count(2);

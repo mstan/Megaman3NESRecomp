@@ -357,7 +357,7 @@ static int menu_ready(void)
         if (memcmp(M.shown.oam + i * 4, cyc_render_oam() + i * 4, 4)) return 0;
     return 1;
 }
-static int menu_place(int slot, uint32_t *out)
+static int menu_place(int slot, uint32_t *out, int width, int origin)
 {
     if (slot >= 4 || !(M.shown.mask & (1u << slot)) || !menu_ready()) return -1;
     for (int i = 0; i < slot; i++) if (M.shown.mask & (1u << i)) return 0;
@@ -365,7 +365,8 @@ static int menu_place(int slot, uint32_t *out)
         uint32_t c = s_atlas.portrait[y * 16 + x];
         int py = M.shown.y + y;
         if (!c || py < 0 || py >= 240 || !(cyc_render_line_mask(py) & 0x10)) continue;
-        out[py * 256 + 0xD0 + x] = color(c, M.shown.weapon, 0);
+        int px = origin + 0xD0 + x;
+        if (px >= 0 && px < width) out[py * width + px] = color(c, M.shown.weapon, 0);
     }
     return 0;
 }
@@ -424,7 +425,7 @@ static int place(int slot, int x, int y, int *out_x, void *context)
     *out_x = x;
     int charge = mm3_charge_place(slot, paint->out);
     if (charge >= 0) return charge;
-    int portrait = menu_place(slot, paint->out);
+    int portrait = menu_place(slot, paint->out, 256, 0);
     if (portrait >= 0) return portrait;
     if (paint->anchor < 0 || !(S.shown.mask & (1ull << slot))) return 1;
     if (slot == paint->anchor) mm3_proto_paint_private(paint->out, 256, 0, cyc_frame_bg_opaque());
@@ -461,6 +462,8 @@ int mm3_proto_place_sprite(int slot, uint64_t body, uint32_t *out, int width, in
 {
     int charge = mm3_charge_private_place(slot,out,width,origin,opaque,cyc_render_oam());
     if (charge >= 0) return charge;
+    int menu = menu_place(slot,out,width,origin);
+    if (menu >= 0) return menu;
     if (!(body & (1ull << slot))) return 1;
     if (!(body & ((1ull << slot)-1))) mm3_proto_paint_private(out,width,origin,opaque);
     return 0;

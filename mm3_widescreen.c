@@ -51,6 +51,7 @@
 #define SEAM 248                 /* native columns from here: background from the level */
 
 static int s_mode = NES_VIDEO_FIT;
+static int s_no_flicker = 1;
 
 /* Stage tables. */
 static uint8_t s_stage_bank[0x2000], s_tile_bank[0x2000];   /* $A000-$BFFF */
@@ -71,7 +72,6 @@ static long s_check_bad = -1, s_check_total;
 static int s_check_x, s_check_y;
 static uint32_t s_check_want, s_check_got;
 static uint32_t s_bg[256 * 240];
-static uint32_t s_sprites[256 * 240];
 
 static uint8_t ram(uint16_t a) { return cyc_cpu_ram()[a & 0x7FF]; }
 
@@ -231,7 +231,7 @@ static int camera_set(const uint8_t *in,int size)
  * its animation ends), then returns as the routine's RTS would. */
 
 #define OBJECT_PAD 16                 /* object centre this far past the window still lives */
-#define MAX_WIDE_SPRITES 256
+#define MAX_WIDE_SPRITES 2048
 #define SLOT_ARRAYS 24                /* per-object arrays $0300, $0320, ... $05E0 */
 
 /* Sprites of one object-draw pass ($F034 bumps $95, then draws every slot).
@@ -272,16 +272,17 @@ static int s_restored;
 typedef struct {
     char magic[4];
     int16_t count[2];
-    uint8_t current, shown, valid, reserved;
+    uint8_t current, shown, valid, no_flicker;
     int32_t left, right;
     WideSprite sprites[2][MAX_WIDE_SPRITES];
 } WideState;
 static int wide_get(uint8_t *out, int cap)
 {
     if (cap < (int)sizeof(WideState)) return -1;
-    WideState n = {0}; memcpy(n.magic,"MW03",4);
+    WideState n = {0}; memcpy(n.magic,"MW04",4);
     for (int i = 0; i < 2; i++) n.count[i] = (int16_t)s_wide_n[i];
     n.current = (uint8_t)s_wide_cur; n.shown = (uint8_t)s_wide_shown; n.valid = s_win_valid;
+    n.no_flicker = (uint8_t)s_no_flicker;
     n.left = s_win_left; n.right = s_win_right; memcpy(n.sprites,s_wide,sizeof s_wide);
     memcpy(out,&n,sizeof n); return sizeof n;
 }
@@ -289,7 +290,7 @@ static int wide_valid(const uint8_t *in, int size)
 {
     if (!size) return 1;
     WideState n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
-    if (memcmp(n.magic,"MW03",4) || n.current > 1 || n.shown > 1 || n.valid > 1 || n.reserved ||
+    if (memcmp(n.magic,"MW04",4) || n.current > 1 || n.shown > 1 || n.valid > 1 || n.no_flicker != s_no_flicker ||
         n.left < 0 || n.right > 65536 || n.right < n.left || (n.valid && n.right == n.left)) return 0;
     for (int f = 0; f < 2; f++) {
         if (n.count[f] < 0 || n.count[f] > MAX_WIDE_SPRITES) return 0;
@@ -362,8 +363,9 @@ static void simulation_window(void)
     s_win_valid = false; s_rects.count = 0;
     int independent = mm3_coop_independent();
     int width = mm3_net_simulation_width(cyc_video_width());
+    if (s_mode == NES_VIDEO_STOCK) width = 256;
     if ((mm3_coop_enabled() && !mm3_coop_scene_active()) ||
-        (!independent && (s_mode == NES_VIDEO_STOCK || width <= 256 || width > CYC_VIDEO_MAX_WIDTH)) || ram(0x22) >= STAGE_COUNT) return;
+        (!independent && ((!s_no_flicker && width <= 256) || width > CYC_VIDEO_MAX_WIDTH)) || ram(0x22) >= STAGE_COUNT) return;
     ensure_stage();
     if (s_stage != ram(0x22)) return;
     int views[2];
@@ -456,19 +458,21 @@ static int object_draw(uint16_t addr)
     if (mm3_coop_independent() && mm3_coop_scene_active() && x < 16 && !mm3_coop_world_slot((unsigned)x)) return 1;
     if (!s_win_valid || s_stage != ram(0x22)) return 0;
     if (x == 0 || x >= 0x20) return 0;                       /* Mega Man stays native */
-    if (!(ram((uint16_t)(0x580 + x)) & 0x10) || ram((uint16_t)(0x3E0 + x))) return 0;
+    int world = (ram((uint16_t)(0x580 + x)) & 0x10) != 0;
+    int private_draw = s_no_flicker && x >= 16;
+    if ((!world && !private_draw) || ram((uint16_t)(0x3E0 + x))) return 0;
     int ox = ram((uint16_t)(0x380 + x)) << 8 | ram((uint16_t)(0x360 + x));
     int cam = ram(0xF9) << 8 | ram(0xFC), dx = ox - cam;
     int independent = mm3_coop_independent();
     int pad = independent ? 32 : OBJECT_PAD;
-    if (independent && !in_views(ox,ram(0x580+x)&8 ? 72 : pad)) {
+    if (world && independent && !in_views(ox,ram(0x580+x)&8 ? 72 : pad)) {
         cyc_mod_poke((uint16_t)(0x300+x),0); cyc_mod_poke((uint16_t)(0x4C0+x),0xFF); return 1;
     }
-    if (dx >= 0 && dx < 256 && (!independent || in_views(ox,pad))) return 0;
-    if (!independent && (ox < s_win_left - OBJECT_PAD || ox >= s_win_right + OBJECT_PAD)) return 0;
+    if (!private_draw && dx >= 0 && dx < 256 && (!independent || in_views(ox,pad))) return 0;
+    if (world && !independent && (ox < s_win_left - OBJECT_PAD || ox >= s_win_right + OBJECT_PAD)) return 0;
 
-    int shifted = ox - 128 < 0 ? 0 : ox - 128;
-    if (independent && !in_views(ox,pad)) {
+    int shifted = world ? (ox - 128 < 0 ? 0 : ox - 128) : cam;
+    if (world && independent && !in_views(ox,pad)) {
         int chosen = 0;
         if (abs(ox-(s_rects.left[1]+128)) < abs(ox-(s_rects.left[0]+128))) chosen = 1;
         shifted = s_rects.left[chosen]; /* native72px hysteresis without a drawn flag */
@@ -527,11 +531,6 @@ static void paint_wide_sprite(uint32_t *out, int width, int play_x0, const uint8
             cyc_render_tile(out, width, 240, cx, y + 8, (uint16_t)(table + bottom * 16), palette, flags, opaque, NULL);
         }
 }
-static void draw_wide_sprites(uint32_t *out, int width, int play_x0, const uint8_t *opaque)
-{
-    for (int i = s_wide_n[s_wide_shown]-1; i >= 0; i--) paint_wide_sprite(out,width,play_x0,opaque,&s_wide[s_wide_shown][i]);
-}
-
 static int rects_get(uint8_t *out, int cap)
 {
     if (cap < (int)sizeof s_rects) return -1;
@@ -554,7 +553,7 @@ void mm3_ws_coop_reset(void)
 static int hud_part(uint16_t address)
 {
     (void)address;
-    if (mm3_coop_independent() && !cyc_mod_isolated()) {
+    if (!cyc_mod_isolated()) {
         CycModRegs r = {0}; cyc_mod_regs(&r);
         s_panel_build.hud_mask |= 1ull << (r.x/4);
     }
@@ -663,7 +662,7 @@ static void enable_hooks(bool on)
     nes_mod_set_function_hook_enabled(HOOK_NMI, on);
     nes_mod_set_function_hook_enabled(HOOK_PASS, on);
     nes_mod_set_function_hook_enabled(HOOK_SPAWN_FILTER, on && mm3_coop_independent());
-    nes_mod_set_function_hook_enabled("mm3.view.hud-part",on && mm3_coop_independent());
+    nes_mod_set_function_hook_enabled("mm3.view.hud-part",on);
     if (!on) s_win_valid = false;
 }
 
@@ -755,9 +754,8 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
     s_match = best; s_samples = samples;
     if (samples == 0 || best * 100 < samples * MATCH_PERCENT) return fallback("not level background");
 
-    /* The native picture never moves: it stays centred, so screen-space
-     * sprites (the energy bars) stay put and leaving a room built for 4:3
-     * does not slide the picture. What the margins show is clipped to the
+    /* Keep the native camera centred. HUD sprites are placed independently
+     * at the canvas edges. What the margins show is clipped to the
      * scroll segment(s) the native view spans - two during a door scroll -
      * and is black past a scroll lock. */
     int play_x0 = (width - 256) / 2, view = cam - play_x0;
@@ -771,8 +769,6 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
      * wrong-coloured strip at the seam once the level continues beside it.
      * There the background comes from the level and only the sprites from the
      * frame. */
-    memset(s_sprites, 0, sizeof s_sprites);
-    cyc_render_sprites(s_sprites, 256, 240, 0, cyc_frame_bg_opaque(), NULL, NULL);
     const uint8_t *native_opaque = cyc_frame_bg_opaque();
     for (int y = 0; y < height; y++) {
         int sl = left, sr = right, screen = screens[l.part[y]], row = l.fine_y[y];
@@ -791,10 +787,8 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
             }
             int wx = screen * 256 + (cam & 255) + nx;
             line[x] = wx < sl || wx >= sr ? 0xFF000000u : level_pixel(wx, row, table, colors, &opaque[x]);
-            if (!mm3_coop_enabled() && nx >= SEAM && nx < 256 && (s_sprites[y * 256 + nx] >> 24)) line[x] = s_sprites[y * 256 + nx];
         }
     }
-    if (!mm3_coop_enabled()) draw_wide_sprites(out, width, play_x0, s_opaque);
     if (s_check && cyc_render_background(s_bg)) {
         /* The decoder's own picture of the native area against the PPU's
          * background-only capture: palettes, CHR banks and fine scroll. */
@@ -827,7 +821,7 @@ static uint32_t s_character_picture[256 * 240];
 typedef struct {
     uint32_t *out;
     const uint8_t *opaque;
-    uint64_t body,skip;
+    uint64_t body,skip,hud;
     int width, origin, guest, wide;
 } SpritePaint;
 static void paint_events(SpritePaint *p, int slot)
@@ -848,18 +842,21 @@ static int sprite_place(int slot, int x, int y, int *out_x, void *user)
     (void)y; SpritePaint *p = (SpritePaint *)user;
     paint_events(p,slot); *out_x = p->origin + x;
     if (p->skip & (1ull << slot)) return 0;
+    if ((p->hud & (1ull << slot)) && p->width > 256) {
+        *out_x = x < 128 ? x : p->width-256+x;
+        return 1;
+    }
     if (mm3_coop_independent()) return 1; /* both personal packets are private */
     return mm3_proto_place_sprite(slot,p->body,p->out,p->width,p->origin,p->opaque);
 }
 static void combined_sprites(uint32_t *out, int width, int origin, const uint8_t *opaque, int wide)
 {
-    uint64_t skip = 0;
-    if (mm3_coop_independent() && s_panel_frame.active) {
-        const uint8_t *oam = cyc_render_oam();
-        for (int i = 0; i < 64; i++) if ((s_panel_frame.hud_mask&(1ull<<i)) &&
-            !memcmp(oam+i*4,s_panel_frame.oam+i*4,4)) skip |= 1ull<<i;
-    }
-    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),skip,width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
+    uint64_t hud = 0;
+    const uint8_t *oam = cyc_render_oam();
+    for (int i = 0; i < 64; i++) if ((s_panel_frame.hud_mask&(1ull<<i)) &&
+        !memcmp(oam+i*4,s_panel_frame.oam+i*4,4)) hud |= 1ull<<i;
+    uint64_t skip = mm3_coop_independent() && s_panel_frame.active ? hud : 0;
+    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),skip,wide ? hud : 0,width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
     cyc_render_sprites(out,width,240,origin,opaque,sprite_place,&p);
     paint_events(&p,-1);
 }
@@ -914,16 +911,16 @@ static int panels(uint32_t *out,int width,int height)
 static int compose(uint32_t *out, int width, int height, int native_x0, const uint32_t *native, void *user)
 {
     if (panels(out,width,height)) return 1;
-    if (mm3_coop_enabled()) {
+    if (mm3_coop_enabled() || s_no_flicker || s_mode != NES_VIDEO_STOCK) {
         if (!cyc_render_background(s_character_picture)) return 0;
         if (width == 256) {
             memcpy(out,s_character_picture,sizeof s_character_picture);
-            if (!mm3_coop_menu_active()) combined_sprites(out,width,0,cyc_frame_bg_opaque(),0); return 1;
+            if (!mm3_coop_menu_active()) combined_sprites(out,width,0,cyc_frame_bg_opaque(),1); return 1;
         }
         if (render_world(out,width,height,native_x0,s_character_picture,user)) {
             if (!mm3_coop_menu_active()) combined_sprites(out,width,cyc_render_native_origin(width),s_opaque,1); return 1;
         }
-        if (!mm3_coop_menu_active()) combined_sprites(s_character_picture,256,0,cyc_frame_bg_opaque(),0);
+        if (!mm3_coop_menu_active()) combined_sprites(s_character_picture,256,0,cyc_frame_bg_opaque(),1);
         int left = (width-256)/2;
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) out[y*width+x] = 0xFF000000u;
@@ -963,9 +960,9 @@ void mm3_ws_refresh_policy(void)
 {
     mm3_world_refresh();
     int characters = mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled();
-    enable_hooks(s_mode != NES_VIDEO_STOCK || characters);
-    cyc_render_set_stock_compositing(characters);
-    bool capture = (s_check || characters) != 0;
+    enable_hooks(s_mode != NES_VIDEO_STOCK || characters || s_no_flicker);
+    cyc_render_set_stock_compositing(characters || s_no_flicker);
+    bool capture = (s_check || characters || s_no_flicker || s_mode != NES_VIDEO_STOCK) != 0;
     if (capture != cyc_background_enabled) cyc_render_capture_background(capture);
     nes_mod_set_local_only("Mega Man 3 widened world",s_mode != NES_VIDEO_STOCK && !mm3_net_available());
 }
@@ -983,12 +980,12 @@ void mm3_ws_power_on(void)
     cyc_render_set_compositor(render, NULL);
     cyc_video_set_mode(s_mode);
     mm3_ws_refresh_policy();
-    cyc_render_capture_background(s_check || mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled());
+    cyc_render_capture_background(s_check || mm3_proto_available() || mm3_charge_available() || mm3_coop_enabled() || s_no_flicker || s_mode != NES_VIDEO_STOCK);
 }
 
 void mm3_ws_frame_end(void)
 {
-    if (s_mode == NES_VIDEO_STOCK && !mm3_coop_independent()) return;
+    if (s_mode == NES_VIDEO_STOCK && !mm3_coop_independent() && !s_no_flicker) return;
     ensure_stage();
 }
 
@@ -998,7 +995,7 @@ void mm3_ws_state_loaded(void)
     s_stage = -1;
     s_win_valid = false;
     if (!s_restored) s_wide_n[0] = s_wide_n[1] = 0;
-    if (s_mode != NES_VIDEO_STOCK || mm3_coop_independent()) ensure_stage();
+    if (s_mode != NES_VIDEO_STOCK || mm3_coop_independent() || s_no_flicker) ensure_stage();
     s_win_valid = restored_window; s_restored = 0;
 }
 
@@ -1021,6 +1018,15 @@ bool mm3_ws_set_mode_name(const char *name)
 
 int mm3_ws_mode(void) { return s_mode; }
 
+int mm3_ws_no_flicker(void) { return s_no_flicker; }
+bool mm3_ws_set_no_flicker(int enabled)
+{
+    if ((enabled != 0 && enabled != 1) || mm3_net_locked()) return false;
+    s_no_flicker = enabled;
+    mm3_ws_refresh_policy();
+    return true;
+}
+
 void mm3_ws_set_check(bool enabled)
 {
     s_check = enabled;
@@ -1037,10 +1043,10 @@ void mm3_ws_describe(char *out, size_t n)
              "\"cam\":%d,\"view_left\":%d,\"play_x0\":%d,\"screens\":[%d,%d],"
              "\"match\":%d,\"samples\":%d,\"composed\":%lu,\"fallback\":%lu,"
              "\"check_bad\":%ld,\"check_total\":%ld,\"check_first\":[%d,%d,\"%08X\",\"%08X\"],"
-             "\"window\":[%d,%d,%s],\"wide_sprites\":%d,\"kept\":%lu,\"spawn_widened\":%lu",
+             "\"window\":[%d,%d,%s],\"no_flicker\":%s,\"wide_sprites\":%d,\"kept\":%lu,\"spawn_widened\":%lu",
              nes_video_geometry_name(s_mode), cyc_video_width(), s_stage, s_seg_count, s_reason,
              s_cam, s_view_left, s_play_x0, s_screens[0], s_screens[1],
              s_match, s_samples, s_composed, s_fallback, s_check_bad, s_check_total,
              s_check_x, s_check_y, (unsigned)s_check_want, (unsigned)s_check_got,
-             s_win_left, s_win_right, s_win_valid ? "true" : "false", s_wide_n[s_wide_shown], s_kept, s_spawn_widened);
+             s_win_left, s_win_right, s_win_valid ? "true" : "false", s_no_flicker ? "true" : "false", s_wide_n[s_wide_shown], s_kept, s_spawn_widened);
 }

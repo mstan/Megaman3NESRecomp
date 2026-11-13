@@ -29,7 +29,7 @@ Mm3Settings mm3_host_settings(void)
 {
     Mm3Settings c={mm3_coop_enabled(),mm3_coop_independent(),mm3_coop_character(0),mm3_coop_wait_both(),
         mm3_proto_available(),mm3_proto_real(),mm3_proto_start(),mm3_weapons_enabled(),
-        mm3_charge_available(),mm3_charge_sound(),mm3_charge_flash(),mm3_ws_mode()!=NES_VIDEO_STOCK,(int)cyc_extra_scanlines()};
+        mm3_charge_available(),mm3_charge_sound(),mm3_charge_flash(),mm3_ws_mode()!=NES_VIDEO_STOCK,(int)cyc_extra_scanlines(),mm3_ws_no_flicker()};
     return c;
 }
 int mm3_host_apply_settings(Mm3Settings c,int local_seat)
@@ -48,7 +48,7 @@ int mm3_host_apply_settings(Mm3Settings c,int local_seat)
     static const char *views[]={"shared","split","p1","p2"};
     if (!mm3_coop_option("--coop-view",views[view])) return 0;
     int mode=c.wide ? (mm3_ws_mode()==NES_VIDEO_STOCK?NES_VIDEO_FIT:mm3_ws_mode()) : NES_VIDEO_STOCK;
-    if (!mm3_ws_set_mode(mode) || !cyc_set_extra_scanlines((unsigned)c.lines)) return 0;
+    if (!mm3_ws_set_mode(mode) || !mm3_ws_set_no_flicker(c.flicker) || !cyc_set_extra_scanlines((unsigned)c.lines)) return 0;
     reduce_slowdown=c.lines!=0;return 1;
 }
 
@@ -71,6 +71,7 @@ static void load_setting(void *ctx, const char *key, const char *value)
         else if (!strcmp(value, "1")) reduce_slowdown = 1;
     }
     if (!strcmp(key, "Widescreen") && !mm3_net_locked()) mm3_ws_set_mode_name(value);
+    if (!strcmp(key, "NoSpriteFlicker") && (!strcmp(value,"0") || !strcmp(value,"1"))) mm3_ws_set_no_flicker(value[0]=='1');
 }
 
 static void save_settings(void *ctx, FILE *f)
@@ -78,6 +79,7 @@ static void save_settings(void *ctx, FILE *f)
     (void)ctx;
     reduce_slowdown = cyc_extra_scanlines() != 0;
     fprintf(f, "ReduceSlowdown = %d\n", reduce_slowdown);
+    fprintf(f, "NoSpriteFlicker = %d\n", mm3_ws_no_flicker());
     mm3_ws_save_setting(f);
 }
 
@@ -87,6 +89,7 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *item, int *out)
     (void)ctx;
     if (!strcmp(item->key, "mm3.coop_view")) { *out = mm3_coop_view_mode(); return 1; }
     if (!strcmp(item->key, "mm3.widescreen")) { *out = mm3_ws_mode(); return 1; }
+    if (!strcmp(item->key, "mm3.no_flicker")) { *out = mm3_ws_no_flicker(); return 1; }
     if (strcmp(item->key, "mm3.reduce_slowdown")) return 0;
     *out = cyc_extra_scanlines() != 0;
     return 1;
@@ -100,6 +103,7 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
         return value >= 0 && value < 4 && mm3_coop_option("--coop-view", views[value]);
     }
     if (!strcmp(item->key, "mm3.widescreen")) return mm3_ws_set_mode(value);
+    if (!strcmp(item->key, "mm3.no_flicker")) return mm3_ws_set_no_flicker(value);
     if (strcmp(item->key, "mm3.reduce_slowdown") || (value != 0 && value != 1)) return 0;
     if (mm3_net_locked()) return 0;
     if (!cyc_set_extra_scanlines(value ? 128u : 0u)) return 0;
@@ -110,6 +114,9 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *item, int value)
 static const char *const widescreen_choices[] = {"Off (4:3)", "16:9", "21:9", "32:9", "Fit window"};
 static const char *const coop_view_choices[] = {"Shared screen", "Independent split screen", "Player one", "Player two"};
 static const RecompRuntimeUiItem menu_items[] = {
+    {.key = "mm3.no_flicker", .section = "Game", .label = "Remove sprite flicker",
+     .description = "Draw enemies without the original sprite budget. Turn off for original sprite allocation.",
+     .type = RECOMP_RUNTIME_UI_BOOL, .minimum = 0, .maximum = 1, .step = 1},
     {.key = "mm3.reduce_slowdown", .section = "Game", .label = "Reduce slowdown",
      .description = "Keep gameplay smooth in enemy-heavy scenes. Turn off for original NES timing.",
      .type = RECOMP_RUNTIME_UI_BOOL, .minimum = 0, .maximum = 1, .step = 1},
@@ -163,7 +170,11 @@ static void tcp_widescreen(int id, const char *line)
     }
     bool check;
     if (cyc_tcp_bool(line, "check", &check)) mm3_ws_set_check(check);
-    char fields[512];
+    bool no_flicker;
+    if (cyc_tcp_bool(line,"no_flicker",&no_flicker) && !mm3_ws_set_no_flicker(no_flicker)) {
+        cyc_tcp_err(id,"sprite allocation is fixed for this match"); return;
+    }
+    char fields[768];
     mm3_ws_describe(fields, sizeof(fields));
     cyc_tcp_ok(id, fields);
 }
@@ -185,7 +196,7 @@ static void tcp_setup(void *ctx)
     (void)ctx;
     cyc_tcp_register("mm3_poke", "store a CPU RAM byte: addr, value (test driving)", tcp_poke);
     cyc_tcp_register("mm3_slowdown", "query/set {enabled: bool} slowdown reduction", tcp_slowdown);
-    cyc_tcp_register("mm3_ws", "widescreen state; set {mode: off|16:9|21:9|32:9|fit}", tcp_widescreen);
+    cyc_tcp_register("mm3_ws", "widescreen state; set {mode: off|16:9|21:9|32:9|fit, no_flicker: bool}", tcp_widescreen);
     mm3_mods_tcp_setup();
     mm3_coop_tcp_setup();
 }
@@ -215,6 +226,7 @@ static bool option(void *ctx, const char *name, const char *value)
     mm3_net_note_option(name);
     if (mm3_mods_option(name, value)) return true;
     if (!strcmp(name, "--widescreen")) return mm3_ws_set_mode_name(value);
+    if (!strcmp(name, "--no-flicker")) return (!strcmp(value,"on") || !strcmp(value,"off")) && mm3_ws_set_no_flicker(!strcmp(value,"on"));
     if (strcmp(name, "--mm3-frame-stats")) return false;
     stats = fopen(value, "w");
     if (!stats) return false;
@@ -268,6 +280,7 @@ const CycHostExtras *cyc_host_extras(void)
     static const CycHostOption options[] = {
         {"--mm3-frame-stats", true, "FILE: observe ROM update completion and busy NMIs"},
         {"--widescreen", true, "off|16:9|21:9|32:9|fit: presented width (default fit)"},
+        {"--no-flicker", true, "on|off: remove the native enemy sprite budget (default on)"},
         {"--weapon-cycle", true, "on|off: L/R cycles acquired weapons and Rush helpers"},
         {"--protoman", true, "on|off: enable character selection and solo Select exchange"},
         {"--proto-mode", true, "protoman|megaman: character traits or normal-stat reskin"},

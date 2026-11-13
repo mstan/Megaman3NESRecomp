@@ -3,7 +3,7 @@
 typedef struct {
     int coop, independent, roster, wait_both;
     int proto, real, start, weapons;
-    int charge, sound, flash, wide, lines;
+    int charge, sound, flash, wide, lines, flicker;
 } Mm3Settings;
 int mm3_net_available(void);
 int mm3_net_locked(void);

@@ -12,6 +12,8 @@ void mm3_ws_state_loaded(void);
 bool mm3_ws_set_mode_name(const char *name);
 bool mm3_ws_set_mode(int mode);
 int  mm3_ws_mode(void);
+bool mm3_ws_set_no_flicker(int enabled);
+int mm3_ws_no_flicker(void);
 void mm3_ws_save_setting(FILE *f);
 
 /* Developer check: compare the decoder with the PPU's background capture. */
