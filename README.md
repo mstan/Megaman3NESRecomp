@@ -12,13 +12,13 @@
 Static recompilation of Mega Man 3 (NES) for native PC.
 Built with the [NESRecomp](https://github.com/mstan/nesrecomp) framework.
 
-> **Status: Feature branch under release validation.** The cycle build has targeted character, co-op, weapon, native menu, adaptive Fit and rollback checks. All 18 stages have bounded location and real boss-clear smoke coverage through the native ending. These checks use disclosed position, equipment, HP and phase assistance; they do not establish complete normal-route playthroughs or other-platform coverage.
+> **Status: v0.2.0 cycle build.** The cycle build has targeted character, co-op, weapon, native menu, adaptive Fit and rollback checks. All 18 stages have bounded location and real boss-clear smoke coverage through the native ending. These checks use disclosed position, equipment, HP and phase assistance; they do not establish complete normal-route playthroughs. The release also passed a Linux/GCC build, native/interpreter checks and current-build state continuation.
 
 ## Cycle backend migration branch
 
 Default cycle controls: arrows move, Z is A, X is B, Enter is Start and
-Backslash is Select. Escape opens the menu, Tab fast-forwards, and F8/F9
-save/load the cycle state. Use Controls to remap inputs in `config.ini`.
+Backslash is Select. Escape opens the menu, Tab fast-forwards, F7 opens the
+save-state browser, and F8 opens rewind. Use Controls to remap inputs in `config.ini`.
 Older `keybinds.ini` and F5/F6/F7 instructions below apply to the legacy host.
 
 The cycle build enables **Reduce slowdown** in the in-game menu. It gives the
@@ -27,7 +27,7 @@ the display and audio retain their normal rate. Turn it off for original NES
 timing. The choice persists as `[Game] ReduceSlowdown` and in cycle save states.
 Headless checks can select `--extra-scanlines 0` (stock) or `128` (enhanced).
 
-The owner's enemy-heavy stage repro completed 503 updates in 600 display frames
+A bounded enemy-heavy stage route completed 503 updates in 600 display frames
 at stock timing, versus 600 with this enhancement. Native/interpreted enhanced
 runs and save-state continuation matched; the stock setting matched the previous
 cycle build exactly. This is a short repro result, not a full-game guarantee.
