@@ -142,6 +142,14 @@ static void view_range(int cam, int *left, int *right)
         if (r2 > *right) *right = r2;
     }
 }
+static int anchored_view(int camera,int width,int left,int right)
+{
+    if(right-left < width)return left-(width-(right-left))/2;
+    int view=camera-(width-256)/2;
+    if(view<left)view=left;
+    if(view>right-width)view=right-width;
+    return view;
+}
 int mm3_ws_room_limits(int *left, int *right)
 {
     ensure_stage();
@@ -348,7 +356,8 @@ static int nmi_latch(uint16_t addr)
     }
     s_wide_shown = s_wide_cur;
     s_panel_frame = s_panel_build;
-    memcpy(s_panel_frame.oam,cyc_cpu_ram()+0x200,sizeof s_panel_frame.oam);
+    /* Keep each HUD part's fingerprint from the instruction that emitted it.
+     * The intro may overwrite those OAM slots with READY before this DMA. */
     /* This hook precedes the actual DMA: choose its captured owner directly.
      * The physical-OAM fingerprint is only valid after the native copy. */
     int owner = mm3_coop_latch();
@@ -379,7 +388,7 @@ static void simulation_window(void)
     if (independent) return;
     int camera = ram(0xF9)*256 + ram(0xFC), left, right;
     view_range(camera,&left,&right);
-    int view = camera - (width-256)/2;
+    int view = anchored_view(camera,width,left,right);
     s_win_left = left > view ? left : view;
     s_win_right = right < view+width ? right : view+width;
     s_win_valid = s_win_left < s_win_right;
@@ -556,6 +565,7 @@ static int hud_part(uint16_t address)
     if (!cyc_mod_isolated()) {
         CycModRegs r = {0}; cyc_mod_regs(&r);
         s_panel_build.hud_mask |= 1ull << (r.x/4);
+        memcpy(s_panel_build.oam+r.x,cyc_cpu_ram()+0x200+r.x,4);
     }
     return 0;
 }
@@ -599,14 +609,14 @@ typedef struct { char magic[4]; PanelFrame build,shown; } PanelState;
 static int panels_get(uint8_t *out,int cap)
 {
     if (cap < (int)sizeof(PanelState)) return -1;
-    PanelState n = {0}; memcpy(n.magic,"VP01",4); n.build = s_panel_build; n.shown = s_panel_frame;
+    PanelState n = {0}; memcpy(n.magic,"VP02",4); n.build = s_panel_build; n.shown = s_panel_frame;
     memcpy(out,&n,sizeof n); return sizeof n;
 }
 static int panels_valid(const uint8_t *in,int size)
 {
     if (!size) return 1;
     PanelState n; if (!in || size != (int)sizeof n) return 0; memcpy(&n,in,size);
-    if (memcmp(n.magic,"VP01",4)) return 0;
+    if (memcmp(n.magic,"VP02",4)) return 0;
     const PanelFrame *f[] = {&n.build,&n.shown};
     for (int k = 0; k < 2; k++) {
         if (f[k]->active > 1 || f[k]->native_scene > 1 || (f[k]->active && f[k]->stage >= STAGE_COUNT)) return 0;
@@ -754,13 +764,11 @@ static int render_world(uint32_t *out, int width, int height, int native_x0, con
     s_match = best; s_samples = samples;
     if (samples == 0 || best * 100 < samples * MATCH_PERCENT) return fallback("not level background");
 
-    /* Keep the native camera centred. HUD sprites are placed independently
-     * at the canvas edges. What the margins show is clipped to the
-     * scroll segment(s) the native view spans - two during a door scroll -
-     * and is black past a scroll lock. */
-    int play_x0 = (width - 256) / 2, view = cam - play_x0;
+    /* Anchor an adaptive view inside its authored room. Narrow rooms remain
+     * centred; HUD and intro overlays have independent screen coordinates. */
     int left, right;
     view_range(cam, &left, &right);
+    int view=anchored_view(cam,width,left,right),play_x0=cam-view;
 
     uint32_t colors[16];
     for (int i = 0; i < 16; i++) colors[i] = cyc_render_color(i & 3 ? i : 0);
@@ -821,7 +829,7 @@ static uint32_t s_character_picture[256 * 240];
 typedef struct {
     uint32_t *out;
     const uint8_t *opaque;
-    uint64_t body,skip,hud;
+    uint64_t body,skip,hud,overlay;
     int width, origin, guest, wide;
 } SpritePaint;
 static void paint_events(SpritePaint *p, int slot)
@@ -842,6 +850,7 @@ static int sprite_place(int slot, int x, int y, int *out_x, void *user)
     (void)y; SpritePaint *p = (SpritePaint *)user;
     paint_events(p,slot); *out_x = p->origin + x;
     if (p->skip & (1ull << slot)) return 0;
+    if(p->overlay & (1ull<<slot)){*out_x=(p->width-256)/2+x;return 1;}
     if ((p->hud & (1ull << slot)) && p->width > 256) {
         *out_x = x < 128 ? x : p->width-256+x;
         return 1;
@@ -855,8 +864,11 @@ static void combined_sprites(uint32_t *out, int width, int origin, const uint8_t
     const uint8_t *oam = cyc_render_oam();
     for (int i = 0; i < 64; i++) if ((s_panel_frame.hud_mask&(1ull<<i)) &&
         !memcmp(oam+i*4,s_panel_frame.oam+i*4,4)) hud |= 1ull<<i;
+    int ready=1;
+    for(int i=0;i<5;i++)if(oam[i*4]!=0x80 || oam[i*4+1]!=0x40+i || oam[i*4+2] || oam[i*4+3]!=0x6C+i*8)ready=0;
+    int intro=ready || (ram(0xEA)==0x74 && ram(0xEB)==0x75 && ram(0x611)==0x30);
     uint64_t skip = mm3_coop_independent() && s_panel_frame.active ? hud : 0;
-    SpritePaint p = {out,opaque,mm3_proto_picture_mask(),skip,wide ? hud : 0,width,origin,mm3_coop_insert_slot(),wide ? s_wide_n[s_wide_shown]-1 : -1};
+    SpritePaint p = {out,opaque,intro?0:mm3_proto_picture_mask(),skip,wide ? hud : 0,ready?31:0,width,origin,intro?-1:mm3_coop_insert_slot(),wide && !intro ? s_wide_n[s_wide_shown]-1 : -1};
     cyc_render_sprites(out,width,240,origin,opaque,sprite_place,&p);
     paint_events(&p,-1);
 }
